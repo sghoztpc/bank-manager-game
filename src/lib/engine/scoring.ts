@@ -1,0 +1,91 @@
+import {
+  ALTERNATIVE_RETURN,
+  ECONOMY,
+  FALSE_BLOCK_LOSS,
+  FINAL_QUESTION_BONUS,
+  FRAUD_MISS_LOSS,
+  FRAUD_REWARD,
+  SPEED_TIERS,
+} from "../config";
+import type { BonusQuestion, DecisionCase } from "../types";
+
+export type Choice = "a" | "d";
+
+export interface DecisionResult {
+  /** What actually happened: a timeout is applied as "d" (decline / block). */
+  applied: Choice;
+  timedOut: boolean;
+  /** The decision was right on the merits. Timeouts never count as correct. */
+  ok: boolean;
+  base: number;
+  speedBonus: number;
+  delta: number;
+  /** Fictional return on the loan stake; null for fraud cases. */
+  roi: number | null;
+  label: string;
+}
+
+/** Relative bonus for an elapsed time in unscaled ms. Boundaries are inclusive. */
+export function speedBonusRate(elapsedMs: number | null): number {
+  if (elapsedMs === null) return 0;
+  for (const tier of SPEED_TIERS) if (elapsedMs <= tier.upToMs) return tier.bonus;
+  return 0;
+}
+
+export function correctChoice(c: DecisionCase): Choice {
+  if (c.kind === "loan") return c.outcome.result === "repaid" ? "a" : "d";
+  return c.truth === "legit" ? "a" : "d";
+}
+
+/**
+ * @param choice null when the player did not submit before the deadline.
+ * @param elapsedMs response time on the unscaled game clock, or null.
+ */
+export function resolveDecision(c: DecisionCase, choice: Choice | null, elapsedMs: number | null): DecisionResult {
+  const timedOut = choice === null;
+  const applied: Choice = choice ?? "d";
+  const rightOnMerits = applied === correctChoice(c);
+  const ok = rightOnMerits && !timedOut;
+
+  let base: number;
+  let label: string;
+  if (c.kind === "loan") {
+    const amount = Math.round(ECONOMY.loanStake * c.outcome.pct);
+    if (applied === "a") {
+      base = c.outcome.result === "repaid" ? amount : -amount;
+      label = c.outcome.result === "repaid" ? "Loan repaid" : "Loan defaulted";
+    } else {
+      base = ALTERNATIVE_RETURN;
+      label = timedOut ? "Timed out: declined, stake placed in government bills" : "Declined: stake placed in government bills";
+    }
+  } else if (applied === "a") {
+    base = c.truth === "legit" ? FRAUD_REWARD : -FRAUD_MISS_LOSS;
+    label = c.truth === "legit" ? "Genuine payment cleared" : "Fraud got through";
+  } else {
+    base = c.truth === "fraud" ? FRAUD_REWARD : -FALSE_BLOCK_LOSS;
+    const prefix = timedOut ? "Timed out: auto-blocked. " : "";
+    label = prefix + (c.truth === "fraud" ? "Fraud stopped" : "Genuine customer blocked");
+  }
+
+  const speedBonus = ok && base > 0 ? Math.round(base * speedBonusRate(elapsedMs)) : 0;
+  const delta = base + speedBonus;
+  return {
+    applied,
+    timedOut,
+    ok,
+    base,
+    speedBonus,
+    delta,
+    roi: c.kind === "loan" ? delta / ECONOMY.loanStake : null,
+    label,
+  };
+}
+
+export function resolveQuestion(q: BonusQuestion, answer: number | null, reward: "powerup" | "money") {
+  const ok = answer === q.answerIndex;
+  return {
+    ok,
+    delta: ok && reward === "money" ? FINAL_QUESTION_BONUS : 0,
+    grantsPowerUp: ok && reward === "powerup",
+  };
+}
