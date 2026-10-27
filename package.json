@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "simulate": "tsx scripts/simulate-economy.ts",
-    "loadtest": "tsx scripts/loadtest.ts"
+    "loadtest": "tsx scripts/loadtest.ts",
+    "bots": "tsx scripts/bots.ts"
   },
   "dependencies": {
     "@upstash/redis": "1.40.0",

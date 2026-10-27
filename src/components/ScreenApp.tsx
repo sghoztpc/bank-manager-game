@@ -73,6 +73,12 @@ export function ScreenApp({ code }: { code: string }) {
               <p className="muted">and enter the room code</p>
               <div className="joincode">{code}</div>
               <p className="eyebrow">{data.playerCount} joined</p>
+              {/^(localhost|127\.|\[::1\])/.test(host) && (
+                <p className="err">
+                  Phones cannot open &quot;localhost&quot;. Open this page using your computer&apos;s network address (for example
+                  http://192.168.1.20:3000) so the QR code works.
+                </p>
+              )}
             </div>
           </div>
         )}

@@ -38,6 +38,20 @@ To rehearse quickly, `GAME_TIME_SCALE=0.25 npm run dev` runs every phase four ti
 Without Redis the deployed app refuses to create games. Separate function instances do not share
 memory, so state would split.
 
+## Beta testing on your own
+
+1. Open the host console and press **Host a new game**. Open the projector view on a second
+   screen (or a second browser window).
+2. Join from your phone by scanning the QR code.
+3. Optionally fill the room with simulated classmates:
+   `npm run bots -- --url <site address> --room <CODE> --players 40`
+4. Press **Start game** in the host console.
+
+When running on your own computer, open the host and projector pages through the computer's
+network address (for example `http://192.168.1.20:3000`), not `localhost`. Otherwise the QR code
+points phones at `localhost`, which they cannot reach. The projector shows a warning when this
+happens.
+
 ## Before using it with a class
 
 - Replace or check the bonus questions in `src/lib/content/questions.ts` against your
