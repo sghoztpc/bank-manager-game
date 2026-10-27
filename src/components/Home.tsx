@@ -8,6 +8,7 @@ export function Home() {
   const router = useRouter();
   const [code, setCode] = useState("");
   const [err, setErr] = useState("");
+  const [hostErr, setHostErr] = useState("");
   const [busy, setBusy] = useState(false);
 
   function join(e: React.FormEvent) {
@@ -19,13 +20,13 @@ export function Home() {
 
   async function host() {
     setBusy(true);
-    setErr("");
+    setHostErr("");
     try {
       const r = await api<{ code: string; hostToken: string }>("/api/sessions", { method: "POST" });
       creds.setHost(r.code, r.hostToken);
       router.push(`/host/${r.code}`);
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "Could not create a game.");
+      setHostErr(e instanceof Error ? e.message : "Could not create a game.");
       setBusy(false);
     }
   }
@@ -67,6 +68,9 @@ export function Home() {
         <button onClick={host} disabled={busy}>
           {busy ? "Creating…" : "Host a new game"}
         </button>
+        <div className="err" role="alert">
+          {hostErr}
+        </div>
       </section>
     </main>
   );
