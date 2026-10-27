@@ -88,4 +88,4 @@ in order.
 | Sequencing and collisions after 20 and 24 | Service test that walks all 29 items | Passed |
 | No speed bonus from 15 to 20 s | Unit and service tests | Passed |
 | Final question money only | Unit, service and load tests | Passed |
-| Full rehearsal within the intended time | Real-time simulated run (below); needs a class rehearsal | See DESIGN.md §13 |
+| Full rehearsal within the intended time | Real-time simulated run with 47 players on Redis | 10.5 min of game, 0 errors, 35.7k Redis commands. Worst case 13.4 min plus joining and debrief. A class rehearsal is still needed (DESIGN.md §13) |

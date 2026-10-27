@@ -225,10 +225,11 @@ Phones / projector / host  --poll (HTTPS JSON)-->  Next.js route handlers on Ver
   `KV_REST_API_TOKEN`. Choose a database region close to the function region. Without these
   variables the app refuses to create games on Vercel, because each function instance would
   otherwise have its own memory.
-- **Redis usage.** A 47-player, real-time rehearsal used the number of commands recorded in the
-  README's verification section. Upstash's free tier allows 500,000 commands a month (checked
-  October 2026; it replaced the old 10,000-a-day cap). Pay-as-you-go is about $0.20 per 100,000
-  commands.
+- **Redis usage.** A 47-player, real-time simulated session used **35,729 Redis commands**. That
+  count includes the commands inside Lua scripts, so it is an upper bound. Upstash's free tier
+  allows 500,000 commands a month (checked October 2026; it replaced the old 10,000-a-day cap), so
+  it covers about 14 sessions a month. Pay-as-you-go is about $0.20 per 100,000 commands, under
+  $0.10 a session.
 - **Vercel Hobby** is for non-commercial, personal use. A class activity run by students fits, but
   a school or company account may need Pro. Sources disagree on the exact Hobby invocation
   allowance, so check the current Hobby limits page. A session is in the low tens of thousands of
@@ -241,8 +242,10 @@ Worst case, with every case running its full 20 s:
 24 × (2 + 20 + 6) + 5 × (15 + 7) + 20 = **802 s ≈ 13.4 min** of game, plus about 1.5 min joining
 and about 1.5 min final results and debrief, which is ≈ 16 minutes.
 
-Cases close early as soon as every connected player has answered, so a responsive class finishes
-nearer 13 to 14 minutes. The host can also press **Next** to cut a reveal short. A full rehearsal
+Cases close early as soon as every connected player has answered. The real-time simulated
+47-player run took 630 s (10.5 min) of game. That run is optimistic, because simulated players
+that are still "thinking" stop polling and stop holding cases open. So plan on 13 to 16 minutes in
+total. The host can also press **Next** to cut a reveal short. A full rehearsal
 with a real class is still required: the brief's 15-minute target is not met in the worst case.
 To save time without touching settled rules, start the game while late joiners are still arriving
 (they are allowed in) and shorten the debrief.
