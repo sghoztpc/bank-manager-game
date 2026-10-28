@@ -32,8 +32,8 @@ To rehearse quickly, `GAME_TIME_SCALE=0.25 npm run dev` runs every phase four ti
 
 ## Deploy to Vercel
 
-1. Import the repository in Vercel and set **Root Directory** to `bank-manager-game`. The framework
-   (Next.js) is detected automatically.
+1. Import the repository in Vercel. The app is at the repository root, so leave **Root Directory**
+   empty; `vercel.json` sets the framework to Next.js.
 2. In the project, open **Storage** and add **Upstash for Redis** from the Marketplace. Connect it
    to the project; it adds `KV_REST_API_URL` and `KV_REST_API_TOKEN`. Pick the region nearest your
    functions.
