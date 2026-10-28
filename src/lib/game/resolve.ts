@@ -1,6 +1,6 @@
 import { NETWORK } from "../config";
 import { applyBalanceChange } from "../engine/elimination";
-import { grantPowerUp } from "../engine/powerups";
+import { grantPowerUp, useBoost } from "../engine/powerups";
 import { getQuizQuestion } from "../engine/quiz";
 import { eliminatedPlayers, rankPlayers, toLeaderEntries, toLeaderEntry } from "../engine/ranking";
 import { getCase } from "../engine/schedule";
@@ -73,7 +73,10 @@ export function resolveItem(
     // the remaining elimination slots and later ones get the safety floor.
     results.sort((a, b) => a.at - b.at || Number(a.choice === null) - Number(b.choice === null) || a.p.joinedAt - b.p.joinedAt);
     for (const { p, choice, ms, at, r } of results) {
-      const b = applyBalanceChange(p, r.delta, { cause: `Case ${item.decisionNo} · ${r.label}`, itemIndex, at }, eliminations);
+      // A waiting power-up token adds 10% to what a correct decision earns.
+      const boost = r.ok ? useBoost(p, r.delta, itemIndex) : 0;
+      const change = r.delta + boost;
+      const b = applyBalanceChange(p, change, { cause: `Case ${item.decisionNo} · ${r.label}`, itemIndex, at }, eliminations);
       if (r.ok) {
         p.correct += 1;
         p.correctMs += Math.round(ms ?? 0);
@@ -87,8 +90,9 @@ export function resolveItem(
         i: itemIndex,
         c: choice,
         delta: b.applied,
-        raw: r.delta,
+        raw: change,
         speedBonus: r.speedBonus,
+        boost: boost || undefined,
         ok: r.ok,
         ms: ms === null ? null : Math.round(ms),
         note: b.outcome === "applied" ? undefined : b.outcome,
@@ -104,12 +108,12 @@ export function resolveItem(
       const q = getQuizQuestion(assignment.questionId);
       const sub = subs[p.id];
       const answer = sub && typeof sub.choice === "number" ? sub.choice : null;
-      const r = resolveQuestion(q, answer, item.reward);
+      const r = resolveQuestion(q, answer, item.reward, p.balance);
       if (answer === null) stats.timeout += 1;
       else if (r.ok) stats.correct += 1;
       else stats.wrong += 1;
       const at = sub?.receivedAt ?? deadlineAt;
-      const b = applyBalanceChange(p, r.delta, { cause: `Quiz ${item.questionNo}`, itemIndex, at }, eliminations);
+      const b = applyBalanceChange(p, r.delta, { cause: `Quiz ${item.questionNo} · wrong answer`, itemIndex, at }, eliminations);
       if (r.grantsPowerUp) grantPowerUp(p, `Q${item.questionNo}`, itemIndex);
       p.history.push({ kind: "quiz", i: itemIndex, c: answer, delta: b.applied, raw: r.delta, speedBonus: 0, ok: r.ok, ms: null, at });
       p.lastResolved = itemIndex;

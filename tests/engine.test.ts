@@ -13,6 +13,7 @@ import { FRAUD_CASES } from "@/lib/content/fraud";
 import { LOANS } from "@/lib/content/loans";
 import { PLAYABLE_QUESTIONS, QUIZ_POOL, SLOT_CATEGORIES } from "@/lib/content/questions";
 import { applyBalanceChange, floorActive, previewBalanceChange } from "@/lib/engine/elimination";
+import { grantPowerUp, unusedPowerUps, useBoost } from "@/lib/engine/powerups";
 import { assignQuiz, getQuizQuestion } from "@/lib/engine/quiz";
 import { eliminatedPlayers, rankPlayers, toLeaderEntries } from "@/lib/engine/ranking";
 import { buildSchedule, drawCases, getCase } from "@/lib/engine/schedule";
@@ -148,12 +149,27 @@ describe("quiz pool and assignment", () => {
     for (const n of positions) expect(n / 10000).toBeGreaterThan(0.2);
   });
 
-  it("grades by option id, not by on-screen position", () => {
+  it("grades by option id: quizzes 1-4 give a boost token or cost 20% of the balance; quiz 5 pays money only", () => {
     const q = getQuizQuestion("Q01");
-    expect(resolveQuestion(q, q.answerIndex, "powerup")).toEqual({ ok: true, delta: 0, grantsPowerUp: true });
-    expect(resolveQuestion(q, (q.answerIndex + 1) % 4, "powerup")).toEqual({ ok: false, delta: 0, grantsPowerUp: false });
-    expect(resolveQuestion(q, q.answerIndex, "money")).toEqual({ ok: true, delta: FINAL_QUESTION_BONUS, grantsPowerUp: false });
-    expect(resolveQuestion(q, null, "money")).toEqual({ ok: false, delta: 0, grantsPowerUp: false });
+    const wrong = (q.answerIndex + 1) % 4;
+    expect(resolveQuestion(q, q.answerIndex, "powerup", 200_000_000)).toEqual({ ok: true, delta: 0, grantsPowerUp: true });
+    expect(resolveQuestion(q, wrong, "powerup", 200_000_000)).toEqual({ ok: false, delta: -40_000_000, grantsPowerUp: false });
+    expect(resolveQuestion(q, null, "powerup", 123_456_789)).toEqual({ ok: false, delta: -24_691_358, grantsPowerUp: false });
+    expect(resolveQuestion(q, wrong, "powerup", 1)).toEqual({ ok: false, delta: 0, grantsPowerUp: false });
+    expect(resolveQuestion(q, q.answerIndex, "money", 5)).toEqual({ ok: true, delta: FINAL_QUESTION_BONUS, grantsPowerUp: false });
+    expect(resolveQuestion(q, wrong, "money", 500)).toEqual({ ok: false, delta: 0, grantsPowerUp: false });
+    expect(resolveQuestion(q, null, "money", 500)).toEqual({ ok: false, delta: 0, grantsPowerUp: false });
+  });
+
+  it("uses boost tokens oldest first, one per correct decision, for +10% of what it earned", () => {
+    const p = player("a", 100);
+    grantPowerUp(p, "Q1", 5);
+    grantPowerUp(p, "Q2", 11);
+    expect(useBoost(p, 100_000_000, 12)).toBe(10_000_000);
+    expect(p.inventory.map((t) => t.usedAtItem)).toEqual([12, null]);
+    expect(useBoost(p, 15_750_000, 13)).toBe(1_575_000);
+    expect(useBoost(p, 100_000_000, 14)).toBe(0);
+    expect(unusedPowerUps(p)).toHaveLength(0);
   });
 });
 

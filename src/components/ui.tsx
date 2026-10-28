@@ -369,8 +369,9 @@ export function Rules({ e, compact }: { e: EconomyView; compact?: boolean }) {
         </li>
         {!compact && (
           <li>
-            <b>Quiz.</b> You get your own question after cases 5, 10, 15 and 20 (a correct answer earns a power-up) and after case 24 (pays{" "}
-            <span className="pos">+{money(e.finalQuestionBonus)}</span>). {e.quizSeconds} seconds each, no penalty for a wrong answer.
+            <b>Quiz.</b> You get your own question after cases 5, 10, 15 and 20: a correct answer earns a power-up (+{e.powerUpBoostPct * 100}% on
+            what your next correct decision earns); a wrong answer, or none, costs <span className="neg">{e.wrongAnswerPenaltyPct * 100}% of your balance</span>.
+            The last quiz, after case 24, pays <span className="pos">+{money(e.finalQuestionBonus)}</span> if correct. {e.quizSeconds} seconds each.
           </li>
         )}
       </ul>

@@ -73,6 +73,8 @@ export interface EconomyView {
   quizSeconds: number;
   eliminationQuota: number;
   safetyFloor: number;
+  powerUpBoostPct: number;
+  wrongAnswerPenaltyPct: number;
 }
 
 export interface QuotaView {

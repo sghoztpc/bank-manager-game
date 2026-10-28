@@ -128,9 +128,24 @@ they are listed below in a separate "Eliminated" section by elimination order at
 
 ## 8. Power-ups
 
-Correct answers to quizzes 1–4 grant an `unassigned` power-up token with no effect yet; the
-catalogue is a separate task (`src/lib/engine/powerups.ts` documents the extension points).
-Eliminated banks keep their tokens but can no longer act, so they can never use one.
+Set by the group after Brief 2 (it replaces Brief 2's "wrong answers have no penalty"):
+
+- **Correct answer to quiz 1–4**: a **boost** token. It adds **+10%** to what the player's next
+  correct case decision earns (speed bonus included), rounded to whole VND. It is used
+  automatically, one token per correct decision, oldest first; a wrong decision or a timeout does
+  not use it. Tokens left at the end are simply unused.
+- **Wrong answer, or no answer, to quiz 1–4**: the bank loses **20% of its current balance**
+  (whole VND). Counting "no answer" as wrong stops players from dodging the penalty by letting the
+  timer run out. Because 80% always remains, a quiz can never bankrupt a bank; at the 1 VND floor
+  the 20% rounds to 0.
+- **Quiz 5** is unchanged: +6.000.000 VND if correct, nothing otherwise, no token.
+- Eliminated banks receive no quizzes, so they earn no tokens and pay no penalty; any tokens they
+  already hold can never be used.
+
+This makes the quiz weigh heavily: a player who misses all four keeps 0.8⁴ ≈ 41% of their balance
+from those quizzes alone, so presentation knowledge now matters about as much as lending
+judgement. Bots that guess quiz answers at random lose a lot to it: in the 47-player load
+test, second and third place fell from about 900.000.000 to about 650.000.000 VND.
 
 ## 9. Case pool and randomisation
 
@@ -191,7 +206,7 @@ Phones / projector / host  --poll (HTTPS JSON)-->  Next.js route handlers on Ver
 | --- | --- |
 | `src/lib/config.ts` | Every balancing and timing number |
 | `src/lib/content/` | Cases and questions |
-| `src/lib/engine/` | Pure logic: schedule, scoring, phase clock, ranking, elimination rule, quiz assignment, power-up hook |
+| `src/lib/engine/` | Pure logic: schedule, scoring, phase clock, ranking, elimination rule, quiz assignment, power-up boost |
 | `src/lib/game/` | Service, the resolution step, and per-role view builders |
 | `src/lib/store/` | `Store` interface, with Redis (production) and in-memory (local, tests) |
 | `src/app/api/sessions/...` | Route handlers: create, join, state, submit, host, adjust, export |
@@ -352,8 +367,11 @@ because it names a risk, not a currency.
   keeps its id (its source letter), the phone submits that id, and grading compares ids, so
   shuffling cannot change the answer, and "always pick B" no longer works (tested: the correct
   answer lands in each position about 25% of the time).
-- **Grading**: once, at the quiz's settlement; a power-up token for quizzes 1–4 or 6.000.000 VND
-  for quiz 5; wrong answers get nothing and lose nothing.
+- **Grading**: once, at the quiz's settlement. Quizzes 1–4: correct earns a +10% boost token,
+  wrong or no answer costs 20% of the balance (A8). Quiz 5: 6.000.000 VND if correct.
+- **Display**: the revealed answer is highlighted on the player's own shuffled options. The
+  source's letter ("B. …") is dropped from the answer text, because it would contradict the
+  shuffled order.
 - **Timing**: **25 seconds**, separate from the 20-second decision timer, because each option is
   about 100 characters. The window closes early once everyone connected has answered.
 

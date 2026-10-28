@@ -159,7 +159,9 @@ export function ScreenApp({ code }: { code: string }) {
                 <section className="card">
                   <div className="spread">
                     <span className="eyebrow">
-                      Quiz {item.questionNo} · {item.reward === "money" ? `correct answer pays +${money(data.economy.finalQuestionBonus)}` : "correct answer earns a power-up"}
+                      Quiz {item.questionNo} · {item.reward === "money"
+                        ? `correct answer pays +${money(data.economy.finalQuestionBonus)}`
+                        : `correct: +${data.economy.powerUpBoostPct * 100}% power-up · wrong: −${data.economy.wrongAnswerPenaltyPct * 100}% of balance`}
                     </span>
                     {data.phase === "question" && (
                       <span className="big">

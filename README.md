@@ -97,7 +97,8 @@ adjustments (each sent twice) and pauses and continues once. The test checks:
   survivors never go below 1 VND, and the floor applies only after the fifth elimination;
 - quiz questions never change for a player and never repeat;
 - speed bonuses never appear on wrong or slow answers; the final quiz pays money only;
-  power-ups match correct answers to quizzes 1 to 4;
+  power-ups match correct answers to quizzes 1 to 4; boosts are applied only to correct decisions,
+  once per spent token; wrong quiz answers never earn money;
 - ranks are in order and ties are shared;
 - the podium stays hidden until revealed, then shows only active banks;
 - the full final ranking is shown.

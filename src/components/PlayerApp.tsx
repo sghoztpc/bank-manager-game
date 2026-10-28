@@ -246,7 +246,7 @@ function Game({ code, me, onLost }: { code: string; me: PlayerCreds; onLost: () 
         </div>
         <div className="stat">
           <span className="eyebrow">Power-ups</span>
-          <b>{data.me.inventory.length}</b>
+          <b>{data.me.inventory.filter((t) => t.usedAtItem === null).length}</b>
         </div>
         <div className="stat">
           <span className="eyebrow">Room</span>
@@ -309,12 +309,6 @@ function Game({ code, me, onLost }: { code: string; me: PlayerCreds; onLost: () 
             {data.phase === "question" && <SimpleCountdown now={now} endsAt={data.phaseEndsAt} />}
           </div>
           <h2 style={{ fontSize: 22 }}>{item.question.prompt}</h2>
-          <p className="muted small">
-            {item.reward === "money"
-              ? `Correct answer: +${money(data.economy.finalQuestionBonus)}. No power-up.`
-              : "Correct answer: a power-up token. No penalty for a wrong answer."}{" "}
-            Everyone has their own question.
-          </p>
           <QuestionOptions
             item={item}
             chosen={typeof mine === "number" ? mine : null}
@@ -434,6 +428,7 @@ function DecisionReveal({ data }: { data: PlayerView }) {
               <span className={`big ${r.raw >= 0 ? "pos" : "neg"}`}>{signedMoney(r.raw)}</span>
               {roiText(r.roi) && <span className="tag">{roiText(r.roi)}</span>}
               {r.speedBonus > 0 && <span className="tag accent">incl. speed bonus +{money(r.speedBonus)}</span>}
+              {(r.boost ?? 0) > 0 && <span className="tag good">incl. power-up +{money(r.boost!)}</span>}
             </div>
             {r.note === "floored" && (
               <span className="tag accent">Safety floor: your balance stops at {money(data.economy.safetyFloor)}, so you stay in the game</span>
@@ -474,12 +469,18 @@ function DecisionReveal({ data }: { data: PlayerView }) {
 function QuestionResult({ data }: { data: PlayerView }) {
   const item = data.item!;
   const r = data.me.result;
+  const e = data.economy;
   const earned = r?.ok && item.reward === "powerup";
   return (
-    <div className={`verdict ${r?.ok ? "good" : "meh"}`}>
-      <strong>{r ? (r.ok ? "Correct" : r.c === null ? "No answer" : "Not this time") : "You were not playing this question"}</strong>
+    <div className={`verdict ${r?.ok ? "good" : r && r.delta < 0 ? "bad" : "meh"}`}>
+      <strong>{r ? (r.ok ? "Correct" : r.c === null ? "No answer" : "Wrong") : "You were not playing this question"}</strong>
       {r?.ok && item.reward === "money" && <span className="pos big">{signedMoney(r.delta)}</span>}
-      {earned && <span>You earned a power-up token. Its effect will be announced by your host.</span>}
+      {earned && <span>Power-up earned: +{e.powerUpBoostPct * 100}% on what your next correct decision earns.</span>}
+      {r && !r.ok && r.raw < 0 && (
+        <span>
+          <span className="neg big">{signedMoney(r.raw)}</span> ({e.wrongAnswerPenaltyPct * 100}% of your balance)
+        </span>
+      )}
       {item.answer && <span className="muted">Answer: {item.answer.text}</span>}
     </div>
   );

@@ -222,6 +222,7 @@ async function main() {
   const finals = await Promise.all(
     bots.map(async (b) => (await call<PlayerView>(`/api/sessions/${code}/state?role=player`, { token: b.token, pid: b.pid })).body),
   );
+  const totals = { penalties: 0, boosts: 0 };
   const eliminatedCount = host.players.filter((p) => p.status === "eliminated").length;
   if (eliminatedCount > 5) problems.push(`${eliminatedCount} eliminations (quota is 5)`);
   if (host.quota.used !== eliminatedCount) problems.push(`quota says ${host.quota.used}, players show ${eliminatedCount}`);
@@ -253,6 +254,14 @@ async function main() {
     if (q5 && q5.ok && q5.raw !== v.economy.finalQuestionBonus) problems.push(`${b.name}: final question paid ${q5.raw}`);
     const fromQuestions = played.filter((e) => [5, 11, 17, 23].includes(e.i) && e.ok).length;
     if (v.me.inventory.length !== fromQuestions) problems.push(`${b.name}: ${v.me.inventory.length} power-ups for ${fromQuestions} correct answers`);
+    const spent = v.me.inventory.filter((t) => t.usedAtItem !== null).length;
+    const boosted = played.filter((e) => (e.boost ?? 0) > 0);
+    if (boosted.length !== spent) problems.push(`${b.name}: ${boosted.length} boosted decisions for ${spent} spent tokens`);
+    if (boosted.some((e) => !e.ok)) problems.push(`${b.name}: boost on a wrong decision`);
+    const missed = played.filter((e) => [5, 11, 17, 23].includes(e.i) && !e.ok);
+    if (missed.some((e) => e.raw > 0)) problems.push(`${b.name}: a wrong quiz answer earned money`);
+    totals.penalties += missed.filter((e) => e.raw < 0).length;
+    totals.boosts += boosted.length;
     const ids = [...b.seenQuestions.values()];
     if (new Set(ids).size !== ids.length) problems.push(`${b.name}: repeated quiz question ${ids.join()}`);
   }
@@ -278,6 +287,7 @@ async function main() {
   console.log(`5xx: ${stats.errors5xx} · other errors: ${JSON.stringify([...stats.otherErrors])}`);
   console.log(`Duplicate taps refused: ${bots.reduce((a, b) => a + b.rejectedDuplicates, 0)} · late submissions refused: ${bots.reduce((a, b) => a + b.lateRejected, 0)}`);
   console.log(`Eliminations: ${eliminatedCount}/5 · floor active: ${host.quota.floorActive} · floored outcomes: ${finals.reduce((a, v) => a + (v.me.history ?? []).filter((e) => e.note === "floored").length, 0)} · eliminated submissions refused: ${bots.reduce((a, b) => a + b.eliminatedRefusals, 0)}`);
+  console.log(`Quiz penalties charged: ${totals.penalties} · power-up boosts applied: ${totals.boosts}`);
   console.log(`Host adjustments: ${adjustments.length} (each sent twice, ${duplicateAdjustmentsRefused} duplicates absorbed)`);
   console.log(`Podium: ${shown.podium?.map((e) => `${e.rank}. ${e.name} ${e.balance.toLocaleString("vi-VN")} VND`).join(", ")}`);
   if (problems.length || stats.errors5xx) {

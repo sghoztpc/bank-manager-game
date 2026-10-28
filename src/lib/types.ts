@@ -213,6 +213,8 @@ export interface HistoryEntry {
   ms: number | null;
   /** "eliminated" or "floored" when the zero rule applied. */
   note?: "eliminated" | "floored";
+  /** Decisions: the power-up boost included in delta. */
+  boost?: number;
   /** Host adjustments: the recorded reason and record id. */
   reason?: string;
   ref?: string;
@@ -221,10 +223,12 @@ export interface HistoryEntry {
 
 export interface PowerUpToken {
   tokenId: string;
-  /** "unassigned" until a power-up catalogue is designed (see src/lib/engine/powerups.ts). */
+  /** See src/lib/engine/powerups.ts. */
   kind: string;
   source: string;
   grantedAtItem: number;
+  /** The decision it boosted; null while still waiting for the next correct decision. */
+  usedAtItem: number | null;
 }
 
 export interface PlayerRecord {

@@ -47,6 +47,13 @@ export const FINAL_QUESTION_BONUS = vnd(ECONOMY.startingBalance * ECONOMY.finalQ
 /** Brief 2: the first five players whose balance reaches zero are eliminated; then a 1 VND floor. */
 export const ELIMINATION = { quota: 5, safetyFloor: 1 } as const;
 
+/**
+ * Quizzes 1-4. Correct: a power-up token that adds 10% to what the player's next correct case
+ * decision earns (used automatically, one token per decision). Wrong or no answer: lose 20% of
+ * the current balance. Quiz 5 stays money only.
+ */
+export const POWER_UP = { boostPct: 0.1, wrongAnswerPenaltyPct: 0.2 } as const;
+
 /** Host balance adjustments: positive whole VND up to this amount. */
 export const ADJUSTMENT_MAX = 10_000_000_000;
 

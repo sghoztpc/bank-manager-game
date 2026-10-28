@@ -8,10 +8,12 @@ import {
   REFERENCE_LOAN_GAIN,
   REFERENCE_LOAN_LOSS,
   ELIMINATION,
+  POWER_UP,
   SPEED_TIERS,
   timing,
 } from "../config";
 import { floorActive } from "../engine/elimination";
+import { unusedPowerUps } from "../engine/powerups";
 import { getQuizQuestion } from "../engine/quiz";
 import { DECISION_COUNT, getCase } from "../engine/schedule";
 import { correctChoice, resolveDecision } from "../engine/scoring";
@@ -47,6 +49,8 @@ const ECONOMY_VIEW: EconomyView = {
   quizSeconds: timing(1).questionMs / 1000,
   eliminationQuota: ELIMINATION.quota,
   safetyFloor: ELIMINATION.safetyFloor,
+  powerUpBoostPct: POWER_UP.boostPct,
+  wrongAnswerPenaltyPct: POWER_UP.wrongAnswerPenaltyPct,
 };
 
 const eliminationView = (e: EliminationRecord): EliminationView => ({ order: e.order, name: e.name, cause: e.cause, change: e.change, before: e.before, at: e.at });
@@ -116,7 +120,9 @@ function itemView(meta: SessionMeta, viewer: Viewer): ItemView | null {
   const assignment = viewer.player.quiz[item.questionNo - 1];
   const q = getQuizQuestion(assignment.questionId);
   view.question = { id: q.id, topic: q.topic, prompt: q.prompt, options: assignment.order.map((id) => ({ id, text: q.options[id] })) };
-  if (revealed) view.answer = { id: q.answerIndex, text: q.suppliedAnswer };
+  // The source's answer line starts with its own letter ("B. ..."), which no longer matches this
+  // player's shuffled order, so the letter is dropped for display. The phone highlights the option.
+  if (revealed) view.answer = { id: q.answerIndex, text: q.suppliedAnswer.replace(/^[A-D]\.\s*/, "") };
   return view;
 }
 
@@ -176,7 +182,7 @@ export function playerView(meta: SessionMeta, player: PlayerRecord, submission: 
       const r = resolveDecision(c, entry.c === "a" || entry.c === "d" ? entry.c : null, entry.ms);
       result = { ...entry, label: r.label, roi: c.kind === "loan" ? entry.raw / ECONOMY.loanStake : null };
     } else {
-      result = { ...entry, label: entry.ok ? "Correct" : entry.c === null ? "No answer" : "Not this time", roi: null };
+      result = { ...entry, label: entry.ok ? "Correct" : entry.c === null ? "No answer" : "Wrong", roi: null };
     }
   }
   const elimination = meta.eliminations.find((e) => e.playerId === player.id);
@@ -218,7 +224,7 @@ export function hostView(
       rank: p.rank,
       late: p.joinedAtItem >= 0,
       active: activeIds.has(p.id),
-      powerUps: p.inventory.length,
+      powerUps: unusedPowerUps(p).length,
       status: p.status,
       eliminationOrder: p.eliminationOrder,
     }))

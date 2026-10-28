@@ -5,6 +5,7 @@ import {
   FINAL_QUESTION_BONUS,
   FRAUD_MISS_LOSS,
   FRAUD_REWARD,
+  POWER_UP,
   SPEED_TIERS,
   vnd,
 } from "../config";
@@ -82,12 +83,16 @@ export function resolveDecision(c: DecisionCase, choice: Choice | null, elapsedM
   };
 }
 
-/** `answer` is the chosen option id (its index in the source), not its on-screen position. */
-export function resolveQuestion(q: QuizQuestion, answer: number | null, reward: "powerup" | "money") {
+/**
+ * `answer` is the chosen option id (its index in the source), not its on-screen position.
+ * Quizzes 1-4 ("powerup"): correct grants a boost token; wrong or no answer loses 20% of the
+ * balance. Quiz 5 ("money"): correct pays the final bonus; wrong costs nothing.
+ */
+export function resolveQuestion(q: QuizQuestion, answer: number | null, reward: "powerup" | "money", balance: number) {
   const ok = answer === q.answerIndex;
-  return {
-    ok,
-    delta: ok && reward === "money" ? FINAL_QUESTION_BONUS : 0,
-    grantsPowerUp: ok && reward === "powerup",
-  };
+  let delta = 0;
+  if (reward === "money" && ok) delta = FINAL_QUESTION_BONUS;
+  // `|| 0` turns a zero penalty (a bank on the 1 VND floor) into 0 rather than -0.
+  if (reward === "powerup" && !ok) delta = -vnd(balance * POWER_UP.wrongAnswerPenaltyPct) || 0;
+  return { ok, delta, grantsPowerUp: ok && reward === "powerup" };
 }

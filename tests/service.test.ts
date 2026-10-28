@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { CAPACITY, ECONOMY, ELIMINATION, FINAL_QUESTION_BONUS, MIN_RESUME_MS, NETWORK, timing } from "@/lib/config";
 import { getQuizQuestion } from "@/lib/engine/quiz";
 import { buildSchedule, getCase } from "@/lib/engine/schedule";
-import { correctChoice } from "@/lib/engine/scoring";
+import { correctChoice, resolveDecision } from "@/lib/engine/scoring";
 import { GameService } from "@/lib/game/service";
 import { hostView, playerView, screenView } from "@/lib/game/views";
 import { MemoryStore } from "@/lib/store/memory";
@@ -176,25 +176,61 @@ describe("quizzes", () => {
     expect(hv.item?.question).toBeUndefined();
   });
 
-  it("grades by option id after shuffling, once, and never penalises a wrong answer", async () => {
-    const { code, hostToken, players } = await setup(["Chi", "Dũng"]);
+  it("grades by option id after shuffling, once: correct earns a token, wrong or no answer costs 20%", async () => {
+    const { code, hostToken, players } = await setup(["Chi", "Dũng", "Em"]);
     await svc.hostAction(code, hostToken, "start");
     const m = await toPhase(code, "question", players);
-    const [right, wrong] = players;
+    const [right, wrong, silent] = players;
     const qr = getQuizQuestion((await rec(code, right)).quiz[0].questionId);
     const qw = getQuizQuestion((await rec(code, wrong)).quiz[0].questionId);
-    const before = (await rec(code, wrong)).balance;
+    const before = { wrong: (await rec(code, wrong)).balance, silent: (await rec(code, silent)).balance, right: (await rec(code, right)).balance };
     await svc.submit(code, right.playerId, right.token, m.itemIndex, qr.answerIndex);
     expect(await svc.submit(code, right.playerId, right.token, m.itemIndex, (qr.answerIndex + 1) % 4)).toMatchObject({ duplicate: true });
     await svc.submit(code, wrong.playerId, wrong.token, m.itemIndex, (qw.answerIndex + 1) % 4);
-    await toPhase(code, "qreveal", players);
+    await toPhase(code, "qreveal", [right, wrong]);
     const r = await rec(code, right);
     const w = await rec(code, wrong);
-    expect(r.inventory).toHaveLength(1);
+    const s = await rec(code, silent);
+    expect(r.inventory).toEqual([expect.objectContaining({ kind: "boost", usedAtItem: null })]);
+    expect(r.balance).toBe(before.right);
     expect(w.inventory).toHaveLength(0);
-    expect(w.balance).toBe(before);
+    expect(w.balance).toBe(before.wrong - Math.round(before.wrong * 0.2));
+    expect(s.balance).toBe(before.silent - Math.round(before.silent * 0.2));
+    // Settling again (a retick) cannot charge twice.
+    await svc.tick(code);
+    expect((await rec(code, wrong)).balance).toBe(before.wrong - Math.round(before.wrong * 0.2));
     const pr = await poll(code, right);
-    expect(playerView(pr.meta, pr.player, null, clock.t, 2).item?.answer?.id).toBe(qr.answerIndex);
+    const answer = playerView(pr.meta, pr.player, null, clock.t, 3).item?.answer;
+    expect(answer?.id).toBe(qr.answerIndex);
+    expect(answer?.text).not.toMatch(/^[A-D]\./); // no source letter that contradicts the shuffled order
+  });
+
+  it("applies the +10% boost to the next correct decision only, then the token is spent", async () => {
+    const { code, hostToken, players } = await setup(["Boost"]);
+    const [p] = players;
+    await svc.hostAction(code, hostToken, "start");
+    const sched = (await meta(code)).schedule;
+    // Quiz 1 correct -> token.
+    let m = await toPhase(code, "question", players);
+    await svc.submit(code, p.playerId, p.token, m.itemIndex, getQuizQuestion((await rec(code, p)).quiz[0].questionId).answerIndex);
+    // Next case: answer wrongly first if possible (token must survive), then correctly.
+    m = await toPhase(code, "open", players);
+    const c1 = getCase((sched[m.itemIndex] as { caseId: string }).caseId);
+    const wrongChoice = correctChoice(c1) === "a" ? "d" : "a";
+    await svc.submit(code, p.playerId, p.token, m.itemIndex, wrongChoice);
+    await toPhase(code, "reveal", players);
+    expect((await rec(code, p)).inventory[0].usedAtItem).toBeNull();
+    m = await toPhase(code, "open", players);
+    const c2 = getCase((sched[m.itemIndex] as { caseId: string }).caseId);
+    clock.t = m.openedAt! + 16_000; // no speed bonus, to keep the arithmetic plain
+    await svc.submit(code, p.playerId, p.token, m.itemIndex, correctChoice(c2));
+    await toPhase(code, "reveal", players);
+    const r = await rec(code, p);
+    const h = r.history.at(-1)!;
+    const earned = resolveDecision(c2, correctChoice(c2), 16_000).delta;
+    expect(h.boost).toBe(Math.round(earned * 0.1));
+    expect(h.raw).toBe(earned + h.boost!);
+    expect(r.inventory[0].usedAtItem).toBe(m.itemIndex);
   });
 });
 

@@ -240,7 +240,7 @@ function Console({ code, token }: { code: string; token: string }) {
                 <span className="eyebrow">
                   {item.type === "decision"
                     ? `Case ${item.decisionNo} · ${item.mode === "fraud" ? "fraud desk" : "loan"}`
-                    : `Quiz ${item.questionNo} · ${item.reward === "money" ? "money only" : "power-up"} · each player has their own random question`}
+                    : `Quiz ${item.questionNo} · ${item.reward === "money" ? "money only" : `power-up or −${data.economy.wrongAnswerPenaltyPct * 100}%`} · each player has their own random question`}
                 </span>
                 {item.type === "decision" && (
                   <button className="small ghost" onClick={() => setShowAnswer((s) => !s)}>
