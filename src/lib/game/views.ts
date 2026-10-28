@@ -15,12 +15,15 @@ import {
 import { floorActive } from "../engine/elimination";
 import { unusedPowerUps } from "../engine/powerups";
 import { getQuizQuestion } from "../engine/quiz";
+import { TUTORIAL_CASE, TUTORIAL_NOTES } from "../content/tutorial";
 import { DECISION_COUNT, getCase } from "../engine/schedule";
 import { correctChoice, resolveDecision } from "../engine/scoring";
 import type { DecisionCase, EliminationRecord, HistoryEntry, LeaderEntry, PlayerRecord, SessionMeta, Submission } from "../types";
 import type {
   EconomyView,
   EliminationView,
+  LobbyView,
+  TutorialView,
   HostView,
   ItemView,
   MeView,
@@ -98,6 +101,26 @@ function revealedCase(c: DecisionCase): RevealedCase {
 /** Phases in which the current item's outcome is public. */
 const isRevealPhase = (m: SessionMeta) => m.phase === "reveal" || m.phase === "qreveal" || m.phase === "final";
 
+/** The tutorial is computed with the live scoring rules on a separate example balance. */
+function tutorialView(meta: SessionMeta): TutorialView | null {
+  if (!meta.tutorial.open || meta.phase !== "lobby") return null;
+  const c = TUTORIAL_CASE;
+  const outcome = (choice: "a" | "d") => {
+    const r = resolveDecision(c, choice, null);
+    return { label: r.label, change: r.delta, roi: r.delta / ECONOMY.loanStake, after: ECONOMY.startingBalance + r.delta };
+  };
+  return {
+    step: meta.tutorial.step,
+    choice: meta.tutorial.choice,
+    case: publicCase(c),
+    notes: TUTORIAL_NOTES,
+    revealed: meta.tutorial.step === "reveal" ? revealedCase(c) : null,
+    outcomes: { a: outcome("a"), d: outcome("d") },
+    exampleBalance: ECONOMY.startingBalance,
+    stake: ECONOMY.loanStake,
+  };
+}
+
 type Viewer = { role: "host" } | { role: "screen" } | { role: "player"; player: PlayerRecord };
 
 function itemView(meta: SessionMeta, viewer: Viewer): ItemView | null {
@@ -171,7 +194,14 @@ function itemTitle(meta: SessionMeta, h: HistoryEntry): string {
   return `${item.decisionNo}. ${getCase(item.caseId).customer}`;
 }
 
-export function playerView(meta: SessionMeta, player: PlayerRecord, submission: Submission | null, now: number, playerCount: number): PlayerView {
+export function playerView(
+  meta: SessionMeta,
+  player: PlayerRecord,
+  submission: Submission | null,
+  now: number,
+  playerCount: number,
+  ready: boolean | null = null,
+): PlayerView {
   const base = baseView(meta, now, playerCount, { role: "player", player });
   const entry = isRevealPhase(meta) ? player.history.find((h) => h.kind !== "adjust" && h.i === meta.itemIndex) : undefined;
   let result: MeView["result"] = null;
@@ -196,6 +226,7 @@ export function playerView(meta: SessionMeta, player: PlayerRecord, submission: 
     rankChange: hideRank || player.rank === null || player.prevRank === null ? 0 : player.prevRank - player.rank,
     late: player.joinedAtItem >= 0,
     status: player.status,
+    ready: meta.phase === "lobby" ? ready === true : null,
     elimination: elimination ? eliminationView(elimination) : null,
     inventory: player.inventory,
     submitted: submission?.choice ?? null,
@@ -213,8 +244,10 @@ export function hostView(
   submitted: number,
   now: number,
   storeKind: string,
+  readyIds: Set<string> | null = null,
 ): HostView {
   const live = players.filter((p) => !p.kicked);
+  const lobby = meta.phase === "lobby" && readyIds !== null;
   const rows = live
     .map((p) => ({
       id: p.id,
@@ -227,6 +260,7 @@ export function hostView(
       powerUps: unusedPowerUps(p).length,
       status: p.status,
       eliminationOrder: p.eliminationOrder,
+      ready: lobby ? readyIds!.has(p.id) : null,
     }))
     .sort((a, b) => (a.rank ?? 1e6 + (a.eliminationOrder ?? 0)) - (b.rank ?? 1e6 + (b.eliminationOrder ?? 0)) || a.name.localeCompare(b.name));
   return {
@@ -237,7 +271,16 @@ export function hostView(
     storeKind,
     adjustments: meta.adjustments,
     settings: meta.settings,
+    lobby: lobby ? lobbySummary(rows) : null,
+    tutorial: tutorialView(meta),
+    tutorialShown: meta.tutorial.shown,
   };
+}
+
+function lobbySummary(rows: { active: boolean; ready: boolean | null }[]): LobbyView {
+  const ready = rows.filter((r) => r.ready).length;
+  const connected = rows.filter((r) => r.active).length;
+  return { total: rows.length, ready, notReady: rows.length - ready, connected, disconnected: rows.length - connected };
 }
 
 export function screenView(
@@ -248,6 +291,7 @@ export function screenView(
   names: string[] | null,
   now: number,
   finalBoard: LeaderEntry[] | null = null,
+  readyCount: number | null = null,
 ): ScreenView {
   const base = baseView(meta, now, playerCount, { role: "screen" });
   return {
@@ -258,5 +302,7 @@ export function screenView(
     names,
     announcements: meta.settings.announceEliminations ? meta.announcements : [],
     settings: meta.settings,
+    readyCount,
+    tutorial: tutorialView(meta),
   };
 }

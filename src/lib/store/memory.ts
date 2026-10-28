@@ -17,6 +17,7 @@ interface SessionData {
   closed: Set<number>;
   views: Map<number, Map<string, number>>;
   seen: Map<string, number>;
+  ready: Set<string>;
 }
 
 export class MemoryStore implements Store {
@@ -41,6 +42,7 @@ export class MemoryStore implements Store {
       closed: new Set(),
       views: new Map(),
       seen: new Map(),
+      ready: new Set(),
     });
     return true;
   }
@@ -151,6 +153,16 @@ export class MemoryStore implements Store {
 
   async getViews(code: string, itemIndex: number) {
     return Object.fromEntries(this.s(code).views.get(itemIndex) ?? new Map());
+  }
+
+  async setReady(code: string, playerId: string, ready: boolean) {
+    const s = this.s(code);
+    if (ready) s.ready.add(playerId);
+    else s.ready.delete(playerId);
+  }
+
+  async readyIds(code: string) {
+    return [...this.s(code).ready];
   }
 
   async touch(code: string, playerId: string, at: number) {

@@ -160,7 +160,31 @@ async function main() {
   console.log(`Joined ${bots.length}. One more join -> ${overflow.status} ${overflow.body.error ?? "(accepted)"}`);
   const extra = overflow.status === 201 ? 1 : 0;
 
-  await call(`/api/sessions/${code}/host`, { method: "POST", token: hostToken, body: JSON.stringify({ action: "start" }) });
+  // Ready check: every bot presses Ready (twice: the repeat must change nothing).
+  const startProblems: string[] = [];
+  await Promise.all(
+    bots.map(async (b) => {
+      for (let k = 0; k < 2; k++) {
+        const r = await call<Json>(`/api/sessions/${code}/ready`, { method: "POST", token: b.token, pid: b.pid, body: JSON.stringify({ ready: true }) });
+        if (r.status !== 200) startProblems.push(`${b.name}: ready -> ${r.status}`);
+      }
+    }),
+  );
+  const hostCmd = (action: string) => call<Json>(`/api/sessions/${code}/host`, { method: "POST", token: hostToken, body: JSON.stringify({ action }) });
+  if (extra) {
+    // The extra player never pressed Ready: a normal start must refuse; Force start goes ahead.
+    const normal = await hostCmd("start");
+    if (normal.status !== 409) startProblems.push(`normal start with an unready player -> ${normal.status}`);
+    const forced = await hostCmd("force-start");
+    if (forced.status !== 200) startProblems.push(`force start -> ${forced.status}`);
+  } else {
+    const normal = await hostCmd("start");
+    if (normal.status !== 200) startProblems.push(`normal start with everyone ready -> ${normal.status} ${normal.body.error}`);
+  }
+  const again = await hostCmd("start");
+  const lateJoin = await call<Json>(`/api/sessions/${code}/join`, { method: "POST", body: JSON.stringify({ name: "After start" }) });
+  if (lateJoin.status !== 409) startProblems.push(`join after start -> ${lateJoin.status}`);
+  console.log(`Start: ${extra ? "normal start refused (1 unready), force start used" : "normal start (all ready)"}; repeat start -> ${again.status}; join after start -> ${lateJoin.status}`);
   const done = { v: false };
   const runs = bots.map((b) => runBot(code, b, done));
 
@@ -215,7 +239,7 @@ async function main() {
 
   // ---- Checks ----
   const host = (await call<HostView>(`/api/sessions/${code}/state?role=host`, { token: hostToken })).body;
-  const problems: string[] = [];
+  const problems: string[] = [...startProblems];
   if (host.phase !== "final") problems.push(`host sees phase ${host.phase}`);
   if (host.players.length !== N + extra) problems.push(`host lists ${host.players.length} players`);
   if (N >= 100 && extra) problems.push("player 101 was admitted");

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import type { HostView } from "@/lib/view-types";
 import { api, ApiError, creds, groupDigits, money, signedMoney, useFrame, usePoll } from "./client";
-import { CaseFile, choiceLabels, Distribution, Leaderboard, Podium, QuotaChip, SimpleCountdown } from "./ui";
+import { CaseFile, choiceLabels, Distribution, Leaderboard, Podium, QuotaChip, SimpleCountdown, Tutorial } from "./ui";
 
 const PHASE_LABEL: Record<string, string> = {
   lobby: "Lobby: players joining",
@@ -159,10 +159,8 @@ function Console({ code, token }: { code: string; token: string }) {
       </section>
 
       <section className="row">
-        {data.phase === "lobby" && (
-          <button className="go" disabled={busy} onClick={() => act("start")}>
-            Start game
-          </button>
+        {data.phase === "lobby" && data.lobby && (
+          <StartControls lobby={data.lobby} busy={busy} act={act} tutorialOpen={!!data.tutorial} />
         )}
         {data.status === "running" && data.phase !== "lobby" && (
           <button disabled={busy} onClick={() => act("pause")}>
@@ -228,6 +226,7 @@ function Console({ code, token }: { code: string; token: string }) {
 
       <div className="grid2" style={{ alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {data.phase === "lobby" && <TutorialControls data={data} busy={busy} act={act} />}
           {data.phase === "final" && data.podium && (
             <section className="card">
               <span className="eyebrow">Podium {data.podiumRevealed ? "(revealed)" : "(only you can see this until you reveal it)"}</span>
@@ -285,10 +284,23 @@ function Console({ code, token }: { code: string; token: string }) {
                     <tr key={p.id}>
                       <td className="mono">{p.status === "eliminated" ? `✕${p.eliminationOrder}` : (p.rank ?? "")}</td>
                       <td>
-                        <span title={p.active ? "connected" : "not seen in the last 10 s"} style={{ color: p.active ? "var(--good)" : "var(--muted)" }}>
+                        <span
+                          title={p.active ? "connected" : "disconnected (no check-in recently)"}
+                          className={p.active ? "dot-ok" : "dot-off"}
+                        >
                           ●
                         </span>{" "}
                         {p.name}
+                        {p.ready !== null && (
+                          <span className={`tag ${p.ready ? "good" : ""}`} style={{ marginLeft: 6 }}>
+                            {p.ready ? "ready" : "not ready"}
+                          </span>
+                        )}
+                        {p.ready !== null && !p.active && (
+                          <span className="tag bad" style={{ marginLeft: 6 }}>
+                            disconnected
+                          </span>
+                        )}
                         {p.late && <span className="tag" style={{ marginLeft: 6 }}>late</span>}
                         {p.status === "eliminated" && <span className="tag bad" style={{ marginLeft: 6 }}>out</span>}
                       </td>
@@ -313,6 +325,97 @@ function Console({ code, token }: { code: string; token: string }) {
         </div>
       </div>
     </main>
+  );
+}
+
+/**
+ * Brief 3 start controls. Start game needs every joined player ready and connected; Force start
+ * needs one connected player and says what it overrides. Neither starts automatically.
+ */
+function StartControls({
+  lobby,
+  busy,
+  act,
+  tutorialOpen,
+}: {
+  lobby: NonNullable<HostView["lobby"]>;
+  busy: boolean;
+  act: (action: string, extra?: Record<string, unknown>) => void;
+  tutorialOpen: boolean;
+}) {
+  const allSet = lobby.total > 0 && lobby.notReady === 0 && lobby.disconnected === 0;
+  const blocking = [lobby.notReady > 0 && `${lobby.notReady} not ready`, lobby.disconnected > 0 && `${lobby.disconnected} disconnected`].filter(Boolean).join(", ");
+  return (
+    <>
+      <span className="tag" style={{ fontSize: 14, padding: "6px 10px" }}>
+        {lobby.ready} / {lobby.total} players ready{lobby.disconnected > 0 ? ` · ${lobby.disconnected} disconnected` : ""}
+      </span>
+      <button
+        className="go"
+        disabled={busy || !allSet}
+        title={allSet ? "Everyone is ready" : lobby.total === 0 ? "Nobody has joined yet" : `Waiting for: ${blocking}`}
+        onClick={() => (!tutorialOpen || window.confirm("Close the tutorial and start the game?")) && act("start")}
+      >
+        Start game
+      </button>
+      <button
+        disabled={busy || lobby.connected === 0}
+        onClick={() =>
+          window.confirm(
+            `Force start now? ${blocking ? `${blocking}. ` : ""}Everyone who has joined enters the game together, ready or not. Unready players are not removed or marked ready.`,
+          ) && act("force-start")
+        }
+      >
+        Force start
+      </button>
+    </>
+  );
+}
+
+/** Host-only tutorial tab: open it, step through one fixed case, reset, close. Lobby only. */
+function TutorialControls({ data, busy, act }: { data: HostView; busy: boolean; act: (action: string, extra?: Record<string, unknown>) => void }) {
+  const t = data.tutorial;
+  if (!t) {
+    return (
+      <section className="card">
+        <span className="eyebrow">Tutorial</span>
+        <p className="muted small">
+          Walk the class through one example loan file on the projector before the game. Players stay in the lobby and nothing is scored.
+        </p>
+        <button disabled={busy} onClick={() => act("tutorial-open")}>
+          {data.tutorialShown ? "Open the tutorial again" : "Tutorial: demonstrate a case"}
+        </button>
+      </section>
+    );
+  }
+  return (
+    <>
+      <section className="card">
+        <div className="spread">
+          <span className="eyebrow">Tutorial controls (shown on the projector)</span>
+          <div className="row">
+            <button className="small" disabled={busy || t.step === "inspect"} onClick={() => act("tutorial-step", { value: "inspect" })}>
+              1 · Inspect
+            </button>
+            <button className="small" disabled={busy || t.step === "decide"} onClick={() => act("tutorial-step", { value: "decide" })}>
+              2 · Decide
+            </button>
+            <button className="small ghost" disabled={busy} onClick={() => act("tutorial-reset")}>
+              Reset
+            </button>
+            <button className="small ghost" disabled={busy} onClick={() => act("tutorial-close")}>
+              Back to lobby
+            </button>
+          </div>
+        </div>
+        <p className="muted small">
+          {t.step === "inspect" && "Point at the notes beside each figure, then go to Decide."}
+          {t.step === "decide" && "Click Approve or Decline below to reveal that choice. Reset to show the other one."}
+          {t.step === "reveal" && "Explain the outcome and the balance calculation. Reset to try the other choice."}
+        </p>
+      </section>
+      <Tutorial t={t} onChoose={busy ? undefined : (c) => act("tutorial-choose", { value: c })} />
+    </>
   );
 }
 

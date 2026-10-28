@@ -171,8 +171,8 @@ test, second and third place fell from about 900.000.000 to about 650.000.000 VN
 - The token and player id are kept in `localStorage`, so refreshing or reconnecting restores the
   same player. The client also re-polls when the tab becomes visible or the network returns.
 - Capacity is 100 players. The host and projector connect separately and do not count.
-- Late joiners are allowed. They start with the standard balance, play from the current case, and
-  carry a "late" tag on the leaderboard.
+- **Admission closes when play starts** (Brief 3, C3). New players can only join in the lobby;
+  players who already joined reconnect at any time with their saved identity.
 - The host can remove a player, for example for an inappropriate nickname.
 - The host key can be moved to another device with the "Copy host link" button (`#key=` in the URL).
 
@@ -359,7 +359,7 @@ because it names a risk, not a currency.
   27 questions remain playable.
 - **Assignment** (`src/lib/engine/quiz.ts`): five distinct questions per player, one per slot,
   drawn independently for each player from a PRNG seeded by the session and player id, and stored
-  on the player record at join, so refreshing never rerolls them. Late joiners get theirs at join.
+  on the player record at join, so refreshing never rerolls them.
 - **Balanced sampling**: slot 1 warm-up, slot 2 tricky, slot 3 core, slot 4 hardcore, slot 5 core.
   Every player gets the same category mix, and the money-paying slot 5 is always a core-topic
   question. This evens out difficulty but does not guarantee it.
@@ -384,5 +384,93 @@ joining and about 1.5 min for the podium and debrief, about 17 minutes in total.
 
 Windows close early when everyone connected has answered; the README records the real-time
 rehearsal result. Brief 2's longer quiz adds about 50 s to the worst case. To stay near 15 minutes:
-start while latecomers are still joining (they are allowed in), use **Next** to shorten reveals,
-and keep the debrief brief. A rehearsal with a real class is still needed.
+run the tutorial in about 90 seconds while students press Ready (the intro then shrinks from 20 to
+10 seconds), use **Next** to shorten reveals, and keep the debrief brief. A rehearsal with a real
+class is still needed.
+
+# Part C: Implementation Brief 3 (tutorial and Ready check)
+
+Agreed adjustments to the brief: a 60-second "connected" window in the lobby; a tutorial case kept
+outside the live pool; a target of about 90 seconds for the demonstration.
+
+## C1. Host-only tutorial
+
+- **Content.** `src/lib/content/tutorial.ts` holds one fixed loan file, "Hoàng Văn Mẫu (example
+  customer)". It is not in the 28-case live pool, so demonstrating it never reveals a live answer.
+  Its figures are consistent (9.000.000 + 8.500.000 VND a month of repayments against 25.000.000
+  VND income gives a DSR of 70%). Beside each field it explains, in plain language:
+  - the loan principal versus a monthly repayment, using the same time unit as income;
+  - DSR, CIC groups, LTV and collateral, with abbreviations spelled out;
+  - the 500.000.000 VND exposure per file;
+  - ROI, defined as the change divided by that exposure;
+  - the example balance calculation.
+- **Flow.** The host steps through **Inspect → Decide → Reveal**, with **Reset** and **Back to
+  lobby**.
+  - **Decide** shows the live layout: a static 20-second timer bar with the speed-bonus marks
+    (no running clock) and the same Approve and Decline buttons.
+  - **Reveal** shows the chosen outcome, the balance arithmetic, ROI, and a table of both choices.
+    It explains the government-bill return for declining and notes that a sensible decision does
+    not guarantee repayment (in this game every case has one fixed outcome).
+  - Outcomes come from the live scoring code (`resolveDecision`), applied to a separate example
+    balance of 300.000.000 VND, so the demonstration uses exactly the real rules.
+- **Where it shows.** The host console controls it and shows a copy. The projector shows it in
+  place of the QR code lobby, with the join code and the ready count still in its header. Because
+  the tutorial lives on the session, it also works when the host controls from another device.
+- **Permissions.** Every tutorial action goes through the host endpoint, which requires the host
+  key. Phones never receive tutorial data and have no tutorial controls (tested).
+- **Separation from the competition.** The tutorial state is `meta.tutorial` (open, step, choice,
+  shown). It never writes player records, readiness, the case counter, the schedule, quiz
+  assignments, power-ups or eliminations (tested by comparing before and after). Opening,
+  closing or replaying it never starts the game.
+- **Scope.** The tutorial is lobby only (the brief's recommended limit). Starting the game closes
+  it. If it was shown, the intro screen drops from 20 to 10 seconds.
+
+## C2. Ready check
+
+- **Storage.** Readiness is a Redis set of player ids (`bmg:CODE:ready`), separate from the player
+  record. Pressing Ready again changes nothing, and it cannot collide with a host balance
+  adjustment. It belongs to the player's identity, so a refresh or reconnect keeps it. A new
+  session has an empty set, and removing a player clears their entry.
+- **Phone.** Players join **Not ready** and see a large **Ready** button. After pressing it they
+  see "Ready — waiting for the host", with "I'm not ready yet" to undo it. Readiness can change
+  only in the lobby; the server refuses changes after the start, and pause or continue never runs
+  a new check.
+- **Host.** The roster shows **ready / not ready** and a separate connection dot, plus a
+  "disconnected" tag on lobby rows. The summary reads, for example, "38 / 45 players ready ·
+  3 disconnected". It keeps updating while the tutorial is open.
+- **Connected in the lobby** means the phone checked in within the last **60 seconds**. During
+  play the window stays at 10 seconds for closing cases early. The lobby window is longer because
+  phones lock their screens while the host explains; a phone checks in again the moment it wakes.
+
+## C3. Start and Force start
+
+- **Start game** requires at least one player, with every joined, non-removed player ready and
+  connected. It is checked against current state under the session lock, so a join or a "not
+  ready" that lands first keeps the room in the lobby, and the host sees why. A disconnected ready
+  player still blocks a normal start rather than being silently dropped.
+- **Force start** needs one connected player and confirms with the host how many are unready or
+  disconnected. Everyone who joined enters the game at the same start time. Unready players are
+  not removed and not marked ready, and disconnected ones reconnect into the running game under
+  the normal deadline rules.
+- **Never automatic.** Even with everyone ready, nothing starts until the host presses a start
+  button.
+- **Once only.** Both buttons go through the same locked lobby-to-intro transition, so repeated
+  clicks or reconnects cannot start twice, reset balances or deal cases again (tested).
+- **Admission.** Joining closes once play starts. The previous late-join rule (Brief 1) is
+  withdrawn because, with elimination, a knocked-out student could rejoin under a new nickname as
+  a fresh 300.000.000 VND bank. Reconnecting with a saved identity still works.
+
+## C4. Verification
+
+- Service tests cover each check in the brief's section 5 that can be automated: host-only
+  tutorial access; its steps and both outcomes; the tutorial leaving competition state untouched;
+  Ready through refresh; Ready versus connected; normal start waiting; a join racing the start;
+  force start with mixed readiness; repeated starts; admission closing; readiness frozen after the
+  start; and new sessions resetting.
+- The load test makes every bot press Ready (twice) and checks the start path. At 47 players, an
+  extra unready player makes a normal start refuse and Force start proceed. At 100 players, a
+  normal start succeeds. In both, a join after the start is refused.
+- A Playwright run covered phones pressing Ready (surviving a refresh), the host's disabled Start,
+  the tutorial on the projector through every step, Ready updates reaching the host during the
+  demonstration, no tutorial on phones, the lobby kept after closing it, and Start moving both
+  phones into the game.

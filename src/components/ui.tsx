@@ -2,8 +2,8 @@
 
 import { useEffect, useState } from "react";
 import type { LeaderEntry, RevealStats } from "@/lib/types";
-import type { EconomyView, ItemView, PublicRow, QuotaView } from "@/lib/view-types";
-import { money, pct } from "./client";
+import type { EconomyView, ItemView, PublicRow, QuotaView, TutorialView } from "@/lib/view-types";
+import { money, pct, signedMoney } from "./client";
 
 const LETTERS = ["A", "B", "C", "D"];
 
@@ -413,4 +413,145 @@ export function Debrief() {
 
 export function roiText(roi: number | null) {
   return roi === null ? null : `ROI ${pct(roi)}`;
+}
+
+/**
+ * Host-led tutorial (Brief 3). The same case layout as live play, with plain-language notes beside
+ * each field. Interactive on the host console (onChoose), display-only on the projector.
+ */
+export function Tutorial({ t, onChoose }: { t: TutorialView; onChoose?: (c: "a" | "d") => void }) {
+  const c = t.case;
+  if (c.kind !== "loan") return null;
+  const signals = t.revealed?.signals;
+  const steps: [TutorialView["step"], string][] = [
+    ["inspect", "1 · Inspect"],
+    ["decide", "2 · Decide"],
+    ["reveal", "3 · Reveal"],
+  ];
+  const chosen = t.choice ? t.outcomes[t.choice] : null;
+  return (
+    <section className="card tutorial">
+      <div className="spread">
+        <span className="tag accent">Tutorial — demonstration only</span>
+        <div className="row">
+          {steps.map(([s, label]) => (
+            <span key={s} className={`tag ${t.step === s ? "accent" : ""}`}>
+              {label}
+            </span>
+          ))}
+        </div>
+      </div>
+      <p className="muted small">
+        Example bank, not a real balance: {money(t.exampleBalance)}. Nothing here changes anyone&apos;s score.
+      </p>
+
+      <div className="spread">
+        <span className="eyebrow">{c.segment} loan file</span>
+        <span className="eyebrow mono">
+          {c.amount} · {c.term}
+        </span>
+      </div>
+      <div>
+        <h2 className="customer">{c.customer}</h2>
+        <p className="muted small">{c.profile}</p>
+      </div>
+      <p>
+        <span className="muted">Purpose: </span>
+        {c.purpose}
+      </p>
+      <p className="note">
+        <b>{c.amount}</b>: {t.notes.amount}
+      </p>
+      <p className="small">
+        <span className="muted">Your bank&apos;s exposure on this file: </span>
+        <span className="mono">{money(t.stake)}</span>
+      </p>
+      <p className="note">{t.notes.stake}</p>
+      <dl className="kv">
+        {c.evidence.map((r, i) => (
+          <div key={i} className={signals?.[i] === "bad" ? "flag-bad" : signals?.[i] === "good" ? "flag-good" : undefined}>
+            <dt>{r.label}</dt>
+            <dd>
+              {r.value}
+              {t.notes[r.label] && <span className="note">{t.notes[r.label]}</span>}
+            </dd>
+          </div>
+        ))}
+      </dl>
+
+      {t.step !== "inspect" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div className="spread">
+            <span className="eyebrow">In the live game: 20 seconds per case</span>
+            <span className="mono">20s</span>
+          </div>
+          <div className="timer" aria-hidden>
+            <i style={{ width: "100%" }} />
+          </div>
+          <div className="tiers" aria-hidden>
+            <span>+5% speed bonus</span>
+            <span>+4%</span>
+            <span>+3%</span>
+            <span>no bonus</span>
+          </div>
+          <p className="note">No timer during the tutorial. In play, a correct answer within 5, 10 or 15 seconds earns 5%, 4% or 3% extra.</p>
+          <div className="choices">
+            <button className={`approve${t.choice === "a" ? " chosen" : ""}`} disabled={!onChoose} onClick={() => onChoose?.("a")}>
+              Approve
+            </button>
+            <button className={`decline${t.choice === "d" ? " chosen" : ""}`} disabled={!onChoose} onClick={() => onChoose?.("d")}>
+              Decline
+            </button>
+          </div>
+        </div>
+      )}
+
+      {t.step === "reveal" && chosen && t.revealed && (
+        <>
+          <div className={`verdict ${t.choice === t.revealed.correct ? "good" : "bad"}`}>
+            <span className="eyebrow">You chose {t.choice === "a" ? "Approve" : "Decline"}</span>
+            <strong>{chosen.label}</strong>
+            <span className={`big ${chosen.change >= 0 ? "pos" : "neg"}`}>{signedMoney(chosen.change)}</span>
+            <span>
+              Example balance: {money(t.exampleBalance)} {chosen.change >= 0 ? "+" : "−"} {money(Math.abs(chosen.change))} = <b>{money(chosen.after)}</b>
+            </span>
+            <span className="muted small">
+              ROI {pct(chosen.roi)}: the change divided by the {money(t.stake)} exposure. ROI is shown as a percentage, separate from the VND amounts.
+            </span>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>If you…</th>
+                <th>Outcome</th>
+                <th className="n">Change</th>
+                <th className="n">Example balance</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(["a", "d"] as const).map((k) => (
+                <tr key={k} className={k === t.choice ? "me" : undefined}>
+                  <td>{k === "a" ? "Approve" : "Decline"}</td>
+                  <td>{t.outcomes[k].label}</td>
+                  <td className={`n ${t.outcomes[k].change >= 0 ? "pos" : "neg"}`}>{signedMoney(t.outcomes[k].change)}</td>
+                  <td className="n">{money(t.outcomes[k].after)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p>
+            <b>What happened:</b> {t.revealed.story}
+          </p>
+          <p>
+            <b>Why:</b> {t.revealed.explanation}
+          </p>
+          <p className="note">
+            Declining is not free money for refusing the customer: the unused {money(t.stake)} goes into government bills, which earn{" "}
+            {signedMoney(t.outcomes.d.change)}. A sensible decision does not guarantee repayment in real life; in this game each case has one
+            fixed outcome so everyone is judged on the same facts.
+          </p>
+        </>
+      )}
+    </section>
+  );
 }

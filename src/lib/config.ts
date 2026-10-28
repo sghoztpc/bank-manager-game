@@ -81,6 +81,8 @@ export const CAPACITY = { maxPlayers: 100 } as const;
 // Cases close early when every connected player has answered; the host can skip any reveal.
 const BASE_TIMING = {
   introMs: 20_000,
+  /** The rules screen is shorter when the host has already run the tutorial. */
+  introAfterTutorialMs: 10_000,
   readyMs: 2_000,
   decisionMs: 20_000,
   revealMs: 6_000,
@@ -98,6 +100,12 @@ export const NETWORK = {
   /** A player who has not polled for this long no longer holds up an early close. */
   activeWindowMs: 10_000,
 } as const;
+
+/**
+ * Lobby only: a phone counts as connected for the Ready check if it checked in within this window.
+ * Longer than in play, because phones lock their screens while the host explains the tutorial.
+ */
+export const LOBBY_CONNECTED_WINDOW_MS = 60_000;
 
 /** On Continue, a decision or quiz window that was nearly over gets at least this much time back. */
 export const MIN_RESUME_MS = 3_000;

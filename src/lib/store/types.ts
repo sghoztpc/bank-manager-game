@@ -43,6 +43,10 @@ export interface Store {
   markViewed(code: string, itemIndex: number, playerId: string, offsetMs: number): Promise<void>;
   getViews(code: string, itemIndex: number): Promise<Record<string, number>>;
 
+  /** Lobby Ready check (Brief 3): a set of player ids, so repeated presses have no extra effect. */
+  setReady(code: string, playerId: string, ready: boolean): Promise<void>;
+  readyIds(code: string): Promise<string[]>;
+
   /** Presence heartbeat. */
   touch(code: string, playerId: string, at: number): Promise<void>;
   activeSince(code: string, since: number): Promise<string[]>;
@@ -58,5 +62,6 @@ export const keys = {
   closed: (c: string, i: number) => `bmg:${c}:closed:${i}`,
   views: (c: string, i: number) => `bmg:${c}:views:${i}`,
   seen: (c: string) => `bmg:${c}:seen`,
+  ready: (c: string) => `bmg:${c}:ready`,
   lock: (name: string) => `bmg:lock:${name}`,
 };

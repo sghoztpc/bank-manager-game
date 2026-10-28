@@ -77,6 +77,29 @@ export interface EconomyView {
   wrongAnswerPenaltyPct: number;
 }
 
+/** Host tutorial (Brief 3): sent to the host and projector only, never to phones. */
+export interface TutorialView {
+  step: "inspect" | "decide" | "reveal";
+  choice: "a" | "d" | null;
+  case: PublicCase;
+  /** Plain-language notes keyed by evidence label, plus "amount" and "stake". */
+  notes: Record<string, string>;
+  /** Reveal step: which rows mattered, the story and explanation. */
+  revealed: RevealedCase | null;
+  /** Both choices, computed by the live scoring rules, for the example bank. */
+  outcomes: Record<"a" | "d", { label: string; change: number; roi: number; after: number }>;
+  exampleBalance: number;
+  stake: number;
+}
+
+export interface LobbyView {
+  total: number;
+  ready: number;
+  notReady: number;
+  connected: number;
+  disconnected: number;
+}
+
 export interface QuotaView {
   used: number;
   total: number;
@@ -126,6 +149,8 @@ export interface MeView {
   rankChange: number;
   late: boolean;
   status: "active" | "eliminated";
+  /** Lobby only: this player's Ready state; null once the game has started. */
+  ready: boolean | null;
   elimination: EliminationView | null;
   inventory: PowerUpToken[];
   /** The player's answer to the current open item, if any. */
@@ -153,6 +178,8 @@ export interface HostPlayerRow {
   powerUps: number;
   status: "active" | "eliminated";
   eliminationOrder: number | null;
+  /** Lobby only; null once the game has started. */
+  ready: boolean | null;
 }
 
 export interface HostView extends SessionView {
@@ -162,6 +189,10 @@ export interface HostView extends SessionView {
   storeKind: string;
   adjustments: AdjustmentRecord[];
   settings: SessionMeta["settings"];
+  /** Lobby only: Ready check summary. */
+  lobby: LobbyView | null;
+  tutorial: TutorialView | null;
+  tutorialShown: boolean;
 }
 
 export interface ScreenView extends SessionView {
@@ -171,4 +202,7 @@ export interface ScreenView extends SessionView {
   names: string[] | null;
   announcements: Announcement[];
   settings: SessionMeta["settings"];
+  /** Lobby only: how many joined players have pressed Ready. */
+  readyCount: number | null;
+  tutorial: TutorialView | null;
 }

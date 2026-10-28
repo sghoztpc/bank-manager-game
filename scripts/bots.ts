@@ -36,6 +36,8 @@ async function bot(i: number) {
     return;
   }
   const auth = { token: j.body.token, pid: j.body.playerId };
+  // Press Ready so the host can use the normal Start game button.
+  await call(`/api/sessions/${ROOM}/ready`, { method: "POST", ...auth, body: JSON.stringify({ ready: true }) });
   const answered = new Set<number>();
   let lastPhase = "";
   for (;;) {
@@ -71,7 +73,7 @@ async function main() {
     console.error("Usage: npm run bots -- --url <site> --room <CODE> --players 40");
     process.exit(1);
   }
-  console.log(`Adding ${N} bots to room ${ROOM} at ${BASE}. Start the game from the host console; press Ctrl+C to stop.`);
+  console.log(`Adding ${N} ready bots to room ${ROOM} at ${BASE}. Start the game from the host console; press Ctrl+C to stop.`);
   const results = await Promise.all(Array.from({ length: N }, (_, i) => sleep(i * 100).then(() => bot(i))));
   const done = results.filter(Boolean).length;
   console.log(`Game over. ${done} bots finished.`);

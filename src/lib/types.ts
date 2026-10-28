@@ -193,6 +193,14 @@ export interface SessionMeta {
     /** Host toggle: keep the leaderboard on the projector. */
     boardOnScreen: boolean;
   };
+  /** Host-only tutorial demonstration (Brief 3), lobby only; never touches competition state. */
+  tutorial: {
+    open: boolean;
+    step: "inspect" | "decide" | "reveal";
+    choice: "a" | "d" | null;
+    /** Shown at least once this session: the intro screen can then be shorter. */
+    shown: boolean;
+  };
   /** Final phase: the host reveals the podium; afterwards results are frozen. */
   podiumRevealed: boolean;
   endedEarly: boolean;

@@ -112,7 +112,7 @@ describe("session flow", () => {
   it("runs all 29 interactions in order, resolving each decision before the quiz that follows", async () => {
     const { code, hostToken, players } = await setup(["Chi"]);
     const [p] = players;
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const sched = (await meta(code)).schedule;
     const assigned = (await rec(code, p)).quiz;
 
@@ -156,7 +156,7 @@ describe("quizzes", () => {
 
   it("shows each phone only its own question, with shuffled options, and the answer only after it closes", async () => {
     const { code, hostToken, players } = await setup(["An", "Bảo"]);
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const m = await toPhase(code, "question", players);
     const [a, b] = players;
     const pa = await poll(code, a);
@@ -178,7 +178,7 @@ describe("quizzes", () => {
 
   it("grades by option id after shuffling, once: correct earns a token, wrong or no answer costs 20%", async () => {
     const { code, hostToken, players } = await setup(["Chi", "Dũng", "Em"]);
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const m = await toPhase(code, "question", players);
     const [right, wrong, silent] = players;
     const qr = getQuizQuestion((await rec(code, right)).quiz[0].questionId);
@@ -208,7 +208,7 @@ describe("quizzes", () => {
   it("applies the +10% boost to the next correct decision only, then the token is spent", async () => {
     const { code, hostToken, players } = await setup(["Boost"]);
     const [p] = players;
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const sched = (await meta(code)).schedule;
     // Quiz 1 correct -> token.
     let m = await toPhase(code, "question", players);
@@ -260,7 +260,7 @@ describe("elimination quota", () => {
     const by = (n: string) => players.find((p) => p.name === n)!;
     for (const n of ["E1", "E2", "E3"]) await adjust(code, hostToken, by(n), "subtract", ECONOMY.startingBalance);
     for (const n of ["A", "B", "C", "D"]) await setBalance(code, hostToken, by(n), 1_000_000);
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const live = players.filter((p) => !p.name.startsWith("E"));
     const { m, choice } = await toLosingCase(code, hostToken, live);
     // Submitted in this order: A first ... D last.
@@ -310,7 +310,7 @@ describe("elimination quota", () => {
     const { code, hostToken, players } = await setup(["Bust", "Other"], seed);
     const [bust, other] = players;
     await setBalance(code, hostToken, bust, 1_000_000);
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     let m = await toPhase(code, "open", players);
     while (m.itemIndex < 4) {
       await svc.hostAction(code, hostToken, "skip");
@@ -341,7 +341,7 @@ describe("elimination quota", () => {
   it("stamps timeouts of an early-closed case at the close, never after a later elimination", async () => {
     const { code, hostToken, players } = await setup(["Slow", "Fast"]);
     const [slow, fast] = players;
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const m = await toPhase(code, "open", players);
     clock.advance(NETWORK.activeWindowMs + 1); // Slow stops polling, so the room does not wait for it
     await poll(code, fast);
@@ -358,7 +358,7 @@ describe("elimination quota", () => {
   it("does not wait for eliminated players before closing early", async () => {
     const { code, hostToken, players } = await setup(["Out", "In"]);
     await adjust(code, hostToken, players[0], "subtract", ECONOMY.startingBalance);
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const m = await toPhase(code, "open", players);
     await svc.submit(code, players[1].playerId, players[1].token, m.itemIndex, "d");
     expect((await meta(code)).phase).toBe("reveal");
@@ -414,7 +414,7 @@ describe("permissions", () => {
     const { code, players } = await setup(["Oanh"]);
     const [p] = players;
     await expect(svc.hostAction(code, p.token, "pause")).rejects.toThrow(/Host key/);
-    await expect(svc.hostAction(code, p.token, "start")).rejects.toThrow(/Host key/);
+    await expect(svc.hostAction(code, p.token, "force-start")).rejects.toThrow(/Host key/);
     await expect(svc.adjust(code, p.token, { id: "nope-key-1", playerId: p.playerId, op: "add", amount: 1, reason: "x" }, "x")).rejects.toThrow(/Host key/);
     await expect(svc.previewAdjustment(code, p.token, { id: "nope-key-2", playerId: p.playerId, op: "add", amount: 1, reason: "x" })).rejects.toThrow(/Host key/);
     await expect(svc.hostSnapshot(code, p.token)).rejects.toThrow(/Host key/);
@@ -433,7 +433,7 @@ describe("pause and continue", () => {
   it("freezes a decision and continues from the saved time; refuses answers while paused", async () => {
     const { code, hostToken, players } = await setup(["Quân", "Sơn"]);
     const [p] = players;
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const m = await toPhase(code, "open", players);
     clock.t = m.openedAt! + 3_000;
     await svc.hostAction(code, hostToken, "pause");
@@ -453,7 +453,7 @@ describe("pause and continue", () => {
 
   it("gives a nearly expired window a few seconds back on Continue instead of timing out", async () => {
     const { code, hostToken, players } = await setup(["Tâm"]);
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const m = await toPhase(code, "open", players);
     clock.t = m.openedAt! + T.decisionMs + 100;
     await svc.hostAction(code, hostToken, "pause");
@@ -467,7 +467,7 @@ describe("pause and continue", () => {
 
   it("freezes a quiz too", async () => {
     const { code, hostToken, players } = await setup(["Uyên"]);
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     await toPhase(code, "question", players);
     clock.advance(5_000);
     await svc.hostAction(code, hostToken, "pause");
@@ -482,7 +482,7 @@ describe("pause and continue", () => {
 describe("decisions", () => {
   async function openFirstCase(names: string[]) {
     const s = await setup(names);
-    await svc.hostAction(s.code, s.hostToken, "start");
+    await svc.hostAction(s.code, s.hostToken, "force-start");
     const m = await toPhase(s.code, "open", s.players);
     return { ...s, m };
   }
@@ -538,7 +538,7 @@ describe("decisions", () => {
 describe("final results", () => {
   it("End settles the open case, then hides ranks and podium until the host reveals them", async () => {
     const { code, hostToken, players } = await setup(["An", "Bình", "Chi"]);
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const m = await toPhase(code, "open", players);
     await svc.submit(code, players[0].playerId, players[0].token, m.itemIndex, "a");
     await svc.hostAction(code, hostToken, "end");
@@ -585,7 +585,7 @@ describe("players", () => {
   it("restores the same identity and progress with the stored token", async () => {
     const { code, hostToken, players } = await setup(["Đức", "Another"]);
     const [p] = players;
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const m = await toPhase(code, "open", players);
     await svc.submit(code, p.playerId, p.token, m.itemIndex, "a");
     const again = await poll(code, p);
@@ -604,8 +604,163 @@ describe("players", () => {
     const { code, hostToken, players } = await setup(["Keep", "Kick"]);
     await svc.hostAction(code, hostToken, "kick", players[1].playerId);
     await expect(poll(code, players[1])).rejects.toThrow(/removed/);
-    await svc.hostAction(code, hostToken, "start");
+    await svc.hostAction(code, hostToken, "force-start");
     const m = await toPhase(code, "reveal", players.slice(0, 1));
     expect(m.rankedCount).toBe(1);
+  });
+});
+
+describe("Brief 3: tutorial", () => {
+  it("lets the host open, step, decide, reveal, reset and close it; players cannot", async () => {
+    const { code, hostToken, players } = await setup(["Lan"]);
+    const [p] = players;
+    await svc.hostAction(code, hostToken, "tutorial-open");
+    let m = await meta(code);
+    expect(m.tutorial).toMatchObject({ open: true, step: "inspect", shown: true });
+    expect(screenView(m, 1, 1, 0, null, clock.t).tutorial?.case.customer).toMatch(/example customer/);
+    await svc.hostAction(code, hostToken, "tutorial-step", undefined, "decide");
+    await svc.hostAction(code, hostToken, "tutorial-choose", undefined, "a");
+    m = await meta(code);
+    const tv = screenView(m, 1, 1, 0, null, clock.t).tutorial!;
+    expect(tv.step).toBe("reveal");
+    // Both choices follow the live scoring rules on the example balance.
+    expect(tv.outcomes.a).toMatchObject({ change: -150_000_000, after: 150_000_000, roi: -0.3 });
+    expect(tv.outcomes.d).toMatchObject({ change: 15_000_000, after: 315_000_000 });
+    expect(tv.revealed?.correct).toBe("d");
+    await svc.hostAction(code, hostToken, "tutorial-reset");
+    expect((await meta(code)).tutorial).toMatchObject({ open: true, step: "inspect", choice: null });
+    await svc.hostAction(code, hostToken, "tutorial-close");
+    expect((await meta(code)).tutorial.open).toBe(false);
+    expect((await meta(code)).phase).toBe("lobby"); // closing never starts the game
+
+    for (const action of ["tutorial-open", "tutorial-choose", "tutorial-reset"]) {
+      await expect(svc.hostAction(code, p.token, action, undefined, "a")).rejects.toThrow(/Host key/);
+    }
+    await svc.hostAction(code, hostToken, "tutorial-open");
+    const pv = await poll(code, p);
+    expect(JSON.stringify(playerView(pv.meta, pv.player, null, clock.t, 1, pv.ready))).not.toMatch(/tutorial|example customer/i);
+  });
+
+  it("changes nothing in the competition, and is lobby-only", async () => {
+    const { code, hostToken, players } = await setup(["An", "Bảo"]);
+    const before = await Promise.all(players.map((p) => rec(code, p)));
+    const m0 = await meta(code);
+    for (const [a, v] of [["tutorial-open"], ["tutorial-step", "decide"], ["tutorial-choose", "a"], ["tutorial-reset"], ["tutorial-step", "decide"], ["tutorial-choose", "d"], ["tutorial-close"]] as [string, string?][]) {
+      await svc.hostAction(code, hostToken, a, undefined, v);
+    }
+    const after = await Promise.all(players.map((p) => rec(code, p)));
+    expect(after).toEqual(before); // balances, quiz assignments, power-ups, status
+    const m1 = await meta(code);
+    expect([m1.schedule, m1.eliminations, m1.leaderboard, m1.itemIndex, m1.phase]).toEqual([m0.schedule, m0.eliminations, m0.leaderboard, m0.itemIndex, m0.phase]);
+    expect(await store.readyIds(code)).toEqual([]);
+    await svc.hostAction(code, hostToken, "force-start");
+    await expect(svc.hostAction(code, hostToken, "tutorial-open")).rejects.toThrow(/lobby/);
+  });
+
+  it("shortens the intro once the host has run the tutorial", async () => {
+    const a = await setup(["X"]);
+    await svc.hostAction(a.code, a.hostToken, "force-start");
+    const plain = await meta(a.code);
+    const b = await setup(["Y"]);
+    await svc.hostAction(b.code, b.hostToken, "tutorial-open");
+    await svc.hostAction(b.code, b.hostToken, "force-start");
+    const shown = await meta(b.code);
+    expect(plain.phaseEndsAt! - plain.phaseStartedAt).toBe(T.introMs);
+    expect(shown.phaseEndsAt! - shown.phaseStartedAt).toBe(T.introAfterTutorialMs);
+    expect(shown.tutorial.open).toBe(false);
+  });
+});
+
+describe("Brief 3: Ready check and start", () => {
+  const ready = (code: string, p: P, r = true) => svc.setReady(code, p.playerId, p.token, r);
+
+  it("joins not ready; Ready persists through refresh; repeats change nothing; can be undone in the lobby", async () => {
+    const { code, hostToken, players } = await setup(["Chi"]);
+    const [p] = players;
+    let v = await poll(code, p);
+    expect(playerView(v.meta, v.player, null, clock.t, 1, v.ready).me.ready).toBe(false);
+    await ready(code, p);
+    await ready(code, p);
+    v = await poll(code, p); // refresh
+    expect(playerView(v.meta, v.player, null, clock.t, 1, v.ready).me.ready).toBe(true);
+    const h = await svc.hostSnapshot(code, hostToken);
+    const hv = hostView(h.meta, h.players, h.activeIds, 0, clock.t, "memory", h.readyIds);
+    expect(hv.players[0].ready).toBe(true);
+    expect(hv.lobby).toMatchObject({ total: 1, ready: 1, notReady: 0 });
+    await ready(code, p, false);
+    expect(await store.readyIds(code)).toEqual([]);
+  });
+
+  it("keeps Ready and Connected separate when a ready player goes offline", async () => {
+    const { code, hostToken, players } = await setup(["On", "Off"]);
+    await ready(code, players[1]);
+    clock.advance(61_000);
+    await poll(code, players[0]);
+    const h = await svc.hostSnapshot(code, hostToken);
+    const hv = hostView(h.meta, h.players, h.activeIds, 0, clock.t, "memory", h.readyIds);
+    const off = hv.players.find((r) => r.name === "Off")!;
+    expect([off.ready, off.active]).toEqual([true, false]);
+    expect(hv.lobby).toMatchObject({ total: 2, ready: 1, connected: 1, disconnected: 1 });
+  });
+
+  it("Start waits for everyone ready and connected, and never starts on its own", async () => {
+    const { code, hostToken, players } = await setup(["A", "B"]);
+    await ready(code, players[0]);
+    await expect(svc.hostAction(code, hostToken, "start")).rejects.toThrow(/1 not ready/);
+    await ready(code, players[1]);
+    clock.advance(5_000);
+    expect((await svc.tick(code)).phase).toBe("lobby"); // all ready: still waits for the host
+    // A ready player who went offline still blocks a normal start (not silently dropped).
+    clock.advance(61_000);
+    await poll(code, players[0]);
+    await expect(svc.hostAction(code, hostToken, "start")).rejects.toThrow(/1 disconnected/);
+    await poll(code, players[1]);
+    await svc.hostAction(code, hostToken, "start");
+    expect((await meta(code)).phase).toBe("intro");
+  });
+
+  it("a join landing just before Start keeps the room in the lobby", async () => {
+    const { code, hostToken, players } = await setup(["A"]);
+    await ready(code, players[0]);
+    await svc.join(code, "Newcomer");
+    await expect(svc.hostAction(code, hostToken, "start")).rejects.toThrow(/not ready/);
+    expect((await meta(code)).phase).toBe("lobby");
+  });
+
+  it("Force start brings unready players in without marking them ready; repeated starts do nothing", async () => {
+    const { code, hostToken, players } = await setup(["Ready", "Unready"]);
+    await ready(code, players[0]);
+    await svc.hostAction(code, hostToken, "force-start");
+    const m1 = await meta(code);
+    await svc.hostAction(code, hostToken, "force-start");
+    await svc.hostAction(code, hostToken, "start");
+    expect((await meta(code)).seq).toBe(m1.seq);
+    expect(await store.readyIds(code)).toEqual([players[0].playerId]);
+    const m = await toPhase(code, "open", players);
+    const v = await poll(code, players[1]);
+    expect(playerView(v.meta, v.player, null, clock.t, 2, v.ready).item?.case).toBeDefined();
+    await svc.submit(code, players[1].playerId, players[1].token, m.itemIndex, "d");
+    for (const p of players) expect((await rec(code, p)).balance).toBe(ECONOMY.startingBalance);
+  });
+
+  it("closes admission once play starts, keeps reconnection, and freezes readiness", async () => {
+    const { code, hostToken, players } = await setup(["In"]);
+    await svc.hostAction(code, hostToken, "force-start");
+    await expect(svc.join(code, "Late")).rejects.toThrow(/already started/);
+    await expect(svc.join(code, "In again")).rejects.toThrow(/already started/);
+    expect((await poll(code, players[0])).player.name).toBe("In"); // reconnect still works
+    await expect(ready(code, players[0])).rejects.toThrow(/started/);
+    await svc.hostAction(code, hostToken, "pause");
+    await svc.hostAction(code, hostToken, "continue");
+    expect((await meta(code)).phase).toBe("intro");
+  });
+
+  it("a new session starts with no readiness and a closed tutorial", async () => {
+    const a = await setup(["Old"]);
+    await svc.setReady(a.code, a.players[0].playerId, a.players[0].token, true);
+    await svc.hostAction(a.code, a.hostToken, "tutorial-open");
+    const b = await setup(["New"]);
+    expect(await store.readyIds(b.code)).toEqual([]);
+    expect((await meta(b.code)).tutorial).toEqual({ open: false, step: "inspect", choice: null, shown: false });
   });
 });

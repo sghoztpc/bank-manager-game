@@ -266,11 +266,13 @@ function Game({ code, me, onLost }: { code: string; me: PlayerCreds; onLost: () 
       {out && <GameOver data={data} />}
 
       {!out && data.phase === "lobby" && (
-        <section className="card">
-          <h2>You&apos;re in, {data.me.name}.</h2>
-          <p className="muted">Waiting for the host to start. Keep this page open.</p>
-          <Rules e={data.economy} />
-        </section>
+        <>
+          <ReadyCard code={code} me={me} ready={data.me.ready === true} name={data.me.name} onChange={poll} />
+          <section className="card">
+            <span className="eyebrow">How it works</span>
+            <Rules e={data.economy} />
+          </section>
+        </>
       )}
 
       {!out && data.phase === "intro" && (
@@ -344,6 +346,49 @@ function Game({ code, me, onLost }: { code: string; me: PlayerCreds; onLost: () 
         </div>
       )}
     </main>
+  );
+}
+
+/**
+ * Lobby Ready check. Pressing Ready only tells the host; the game starts when the host starts it.
+ * The state lives on the server, so it survives a refresh.
+ */
+function ReadyCard({ code, me, ready, name, onChange }: { code: string; me: PlayerCreds; ready: boolean; name: string; onChange: () => void }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  async function set(next: boolean) {
+    setBusy(true);
+    setErr("");
+    try {
+      await api(`/api/sessions/${code}/ready`, { method: "POST", token: me.token, playerId: me.playerId, body: JSON.stringify({ ready: next }) });
+    } catch (e) {
+      setErr(e instanceof ApiError ? e.message : "Could not send. Try again.");
+    }
+    setBusy(false);
+    onChange();
+  }
+  return (
+    <section className="card" style={{ alignItems: "center", textAlign: "center" }}>
+      <h2>You&apos;re in, {name}.</h2>
+      {ready ? (
+        <>
+          <p className="pos" style={{ fontSize: 20, fontWeight: 600 }}>
+            Ready — waiting for the host
+          </p>
+          <button className="small ghost" disabled={busy} onClick={() => set(false)}>
+            I&apos;m not ready yet
+          </button>
+        </>
+      ) : (
+        <>
+          <p className="muted">Press Ready when you are prepared to begin. Keep this page open; the host starts the game for everyone.</p>
+          <button className="go ready-btn" disabled={busy} onClick={() => set(true)} style={{ width: "100%" }}>
+            Ready
+          </button>
+        </>
+      )}
+      {err && <p className="err">{err}</p>}
+    </section>
   );
 }
 

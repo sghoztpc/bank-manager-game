@@ -13,19 +13,19 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
     const svc = getService();
 
     if (role === "player") {
-      const { meta, player, submission } = await svc.playerPoll(code, playerIdHeader(req), bearer(req), {
+      const { meta, player, submission, ready } = await svc.playerPoll(code, playerIdHeader(req), bearer(req), {
         heartbeat: url.searchParams.get("hb") === "1",
         firstView: url.searchParams.get("first") === "1",
       });
-      return json(playerView(meta, player, submission, Date.now(), meta.rankedCount));
+      return json(playerView(meta, player, submission, Date.now(), meta.rankedCount, ready));
     }
     if (role === "host") {
       const s = await svc.hostSnapshot(code, bearer(req));
-      return json(hostView(s.meta, s.players, s.activeIds, s.submitted, Date.now(), s.storeKind));
+      return json(hostView(s.meta, s.players, s.activeIds, s.submitted, Date.now(), s.storeKind, s.readyIds));
     }
     if (role === "screen") {
       const s = await svc.screenSnapshot(code);
-      return json(screenView(s.meta, s.playerCount, s.activeCount, s.submitted, s.names, Date.now(), s.finalBoard));
+      return json(screenView(s.meta, s.playerCount, s.activeCount, s.submitted, s.names, Date.now(), s.finalBoard, s.readyCount));
     }
     throw new GameError(400, "Unknown role.");
   });

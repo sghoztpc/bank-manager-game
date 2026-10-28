@@ -202,3 +202,11 @@ tbody.out td { color: var(--muted); }
   .podium .p3 { order: 3; min-height: 0; }
   .podium .place { font-size: 32px; }
 }
+
+/* Brief 3: tutorial notes and ready states */
+.note { display: block; font-family: var(--body); font-size: 13px; color: var(--info); margin-top: 4px; line-height: 1.4; }
+.screen .note { font-size: 18px; }
+.tutorial { border-color: var(--accent); }
+.ready-btn { min-height: 72px; font-size: 28px; }
+.dot-ok { color: var(--good); }
+.dot-off { color: var(--muted); }

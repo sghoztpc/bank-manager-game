@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
-import { ADJUSTMENT_MAX, CAPACITY, ECONOMY, ELIMINATION, NETWORK, timeScale, timing, type Timing } from "../config";
+import { ADJUSTMENT_MAX, CAPACITY, ECONOMY, ELIMINATION, LOBBY_CONNECTED_WINDOW_MS, NETWORK, timeScale, timing, type Timing } from "../config";
 import { applyBalanceChange, floorActive, previewBalanceChange } from "../engine/elimination";
 import { decisionClosesAt, nextPhase, pause, resume } from "../engine/phases";
 import { assignQuiz } from "../engine/quiz";
@@ -69,6 +69,25 @@ function announcementsFor(added: EliminationRecord[], countBefore: number, count
   return out;
 }
 
+/** Host tutorial controls. Pure: the demonstration only ever changes its own small state. */
+function nextTutorial(t: SessionMeta["tutorial"], action: string, value: unknown): SessionMeta["tutorial"] {
+  switch (action) {
+    case "tutorial-open":
+      return { ...t, open: true, shown: true };
+    case "tutorial-close":
+      return { ...t, open: false };
+    case "tutorial-reset":
+      return { ...t, open: true, step: "inspect", choice: null };
+    case "tutorial-step":
+      if (value !== "inspect" && value !== "decide") throw new GameError(400, "Unknown tutorial step.");
+      return { ...t, open: true, step: value, choice: null };
+    case "tutorial-choose":
+      if (value !== "a" && value !== "d") throw new GameError(400, "Choose approve or decline.");
+      return { ...t, open: true, step: "reveal", choice: value };
+  }
+  return t;
+}
+
 /** Announcements wait until the projector is not showing a case or quiz. */
 function releaseAnnouncements(meta: SessionMeta, now: number): SessionMeta {
   if (LIVE_PHASES.has(meta.phase) || meta.announcements.every((a) => a.showFrom !== null)) return meta;
@@ -134,6 +153,7 @@ export class GameService {
         adjustments: [],
         announcements: [],
         settings: { announceEliminations: true, announceDismissedAt: null, boardOnScreen: false },
+        tutorial: { open: false, step: "inspect", choice: null, shown: false },
         podiumRevealed: false,
         endedEarly: false,
       };
@@ -144,7 +164,9 @@ export class GameService {
 
   async join(code: string, rawName: unknown): Promise<{ playerId: string; token: string; name: string }> {
     const meta = await this.tick(code);
-    if (meta.status === "finished") throw new GameError(409, "This game has finished.");
+    // Brief 3: admission closes when play starts, so nobody (an eliminated player included) can
+    // come back as a fresh bank. Existing players reconnect with their saved identity instead.
+    if (meta.phase !== "lobby") throw new GameError(409, "This game has already started, so new players can't join. If you joined earlier, reopen the link on the same phone.");
     const base = cleanNickname(rawName);
     if (base.length < 1) throw new GameError(400, "Enter a nickname.");
 
@@ -158,8 +180,8 @@ export class GameService {
 
     const token = newToken();
     const id = randomBytes(9).toString("base64url");
-    const lateItem = meta.phase === "ready" || meta.phase === "open" || meta.phase === "question" ? meta.itemIndex : meta.itemIndex + 1;
-    const joinedAtItem = meta.phase === "lobby" || meta.phase === "intro" ? -1 : lateItem;
+    // Everyone joins in the lobby now; the field stays for records from older sessions.
+    const joinedAtItem = -1;
     const player: PlayerRecord = {
       id,
       name,
@@ -310,10 +332,14 @@ export class GameService {
       tasks.push(this.store.markViewed(code, meta.itemIndex, playerId, Math.max(0, now - meta.openedAt)));
     }
     const needsSub = meta.phase === "open" || meta.phase === "question";
-    const [sub] = await Promise.all([needsSub ? this.store.getSubmission(code, meta.itemIndex, playerId) : null, ...tasks]);
+    const [sub, ready] = await Promise.all([
+      needsSub ? this.store.getSubmission(code, meta.itemIndex, playerId) : null,
+      meta.phase === "lobby" ? this.store.readyIds(code) : null,
+      ...tasks,
+    ]);
     // The player record is only rewritten on resolution; re-read it if one just happened.
     const fresh = meta.seq !== known.seq ? ((await this.store.getPlayer(code, playerId)) ?? player) : player;
-    return { meta, player: fresh, submission: sub as Submission | null };
+    return { meta, player: fresh, submission: sub as Submission | null, ready: ready ? (ready as string[]).includes(playerId) : null };
   }
 
   async submit(code: string, playerId: string, token: string, itemIndex: number, choice: unknown) {
@@ -377,8 +403,38 @@ export class GameService {
       const before = meta.seq;
       switch (action) {
         case "start":
+        case "force-start": {
+          // Checked against current state under the session lock: a join or Ready change that
+          // lands first keeps the room in the lobby. Only one start can ever commit.
           if (meta.phase !== "lobby") return meta;
-          meta = await this.advance(meta, (f) => f.phase === "lobby");
+          const force = action === "force-start";
+          meta = await this.advance(
+            meta,
+            (f) => f.phase === "lobby",
+            async (f) => {
+              const s = await this.lobbyStatus(code);
+              if (s.connected === 0) throw new GameError(409, "No player is connected yet.");
+              if (!force && (s.notReady > 0 || s.disconnected > 0)) {
+                throw new GameError(409, `Not everyone is ready: ${s.notReady} not ready, ${s.disconnected} disconnected. Wait, or use Force start.`);
+              }
+              const t = this.timingFor(f);
+              const started = { ...f, ...nextPhase(f, now(), t) };
+              return {
+                ...started,
+                phaseEndsAt: now() + (f.tutorial.shown ? t.introAfterTutorialMs : t.introMs),
+                tutorial: { ...f.tutorial, open: false, choice: null, step: "inspect" },
+              };
+            },
+          );
+          break;
+        }
+        case "tutorial-open":
+        case "tutorial-close":
+        case "tutorial-step":
+        case "tutorial-choose":
+        case "tutorial-reset":
+          if (meta.phase !== "lobby") throw new GameError(409, "The tutorial is available in the lobby, before the game starts.");
+          meta = await this.advance(meta, (f) => f.phase === "lobby", (f) => ({ ...f, tutorial: nextTutorial(f.tutorial, action, value) }));
           break;
         case "skip":
           // Ends the current phase now (closing an open case resolves it with whatever arrived).
@@ -510,6 +566,36 @@ export class GameService {
     throw new GameError(503, "The game is busy. Try the adjustment again.");
   }
 
+  /** Lobby roster for the Ready check: everyone joined, who is ready, who checked in recently. */
+  async lobbyStatus(code: string) {
+    const [players, ready, connected] = await Promise.all([
+      this.store.getPlayers(code),
+      this.store.readyIds(code),
+      this.store.activeSince(code, this.now() - LOBBY_CONNECTED_WINDOW_MS),
+    ]);
+    const roster = players.filter((p) => !p.kicked);
+    const readySet = new Set(ready);
+    const connectedSet = new Set(connected);
+    return {
+      total: roster.length,
+      ready: roster.filter((p) => readySet.has(p.id)).length,
+      notReady: roster.filter((p) => !readySet.has(p.id)).length,
+      connected: roster.filter((p) => connectedSet.has(p.id)).length,
+      disconnected: roster.filter((p) => !connectedSet.has(p.id)).length,
+      readySet,
+      connectedSet,
+    };
+  }
+
+  /** Player: Ready / Not ready, lobby only. Repeating the same choice changes nothing. */
+  async setReady(code: string, playerId: string, token: string, ready: boolean) {
+    const [known] = await this.authPlayer(code, playerId, token);
+    const meta = await this.tick(code, known);
+    if (meta.phase !== "lobby") throw new GameError(409, "The game has started; readiness can no longer change.");
+    await Promise.all([this.store.setReady(code, playerId, ready), this.store.touch(code, playerId, this.now())]);
+    return { ready };
+  }
+
   private async kick(code: string, playerId: string) {
     const p = await this.store.getPlayer(code, playerId);
     if (!p) return;
@@ -519,18 +605,30 @@ export class GameService {
       this.store.removePlayer(code, playerId),
       this.store.forget(code, playerId),
       this.store.releaseName(code, p.name.toLocaleLowerCase("vi")),
+      this.store.setReady(code, playerId, false),
     ]);
   }
 
   async hostSnapshot(code: string, token: string) {
     const meta = await this.tick(code, await this.authHost(code, token));
     const live = meta.phase === "open" || meta.phase === "question";
-    const [players, active, submitted] = await Promise.all([
+    const lobby = meta.phase === "lobby";
+    const [players, active, submitted, ready] = await Promise.all([
       this.store.getPlayers(code),
-      this.store.activeSince(code, this.now() - NETWORK.activeWindowMs),
+      // In the lobby "connected" uses the longer lobby window (phones lock while the host explains).
+      this.store.activeSince(code, this.now() - (lobby ? LOBBY_CONNECTED_WINDOW_MS : NETWORK.activeWindowMs)),
       live ? this.store.countSubmissions(code, meta.itemIndex) : Promise.resolve(0),
+      lobby ? this.store.readyIds(code) : Promise.resolve([] as string[]),
     ]);
-    return { meta, players, activeIds: new Set(active), submitted, storeKind: this.store.kind, floor: floorActive(meta.eliminations) };
+    return {
+      meta,
+      players,
+      activeIds: new Set(active),
+      readyIds: lobby ? new Set(ready) : null,
+      submitted,
+      storeKind: this.store.kind,
+      floor: floorActive(meta.eliminations),
+    };
   }
 
   async screenSnapshot(code: string) {
@@ -539,11 +637,12 @@ export class GameService {
     const lobby = meta.phase === "lobby" || meta.phase === "intro";
     // After the podium reveal the projector shows the full final ranking, not just the top 10.
     const fullFinal = meta.phase === "final" && meta.podiumRevealed;
-    const [playerCount, active, submitted, players] = await Promise.all([
+    const [playerCount, active, submitted, players, ready] = await Promise.all([
       this.store.countPlayers(code),
       this.store.activeSince(code, this.now() - NETWORK.activeWindowMs),
       live ? this.store.countSubmissions(code, meta.itemIndex) : Promise.resolve(0),
       lobby || fullFinal ? this.store.getPlayers(code) : Promise.resolve(null),
+      meta.phase === "lobby" ? this.store.readyIds(code) : Promise.resolve(null),
     ]);
     const names = lobby && players ? players.filter((p) => !p.kicked).sort((a, b) => a.joinedAt - b.joinedAt).map((p) => p.name) : null;
     const finalBoard =
@@ -553,7 +652,8 @@ export class GameService {
             .sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || displayOrder(a, b))
             .map(toLeaderEntry)
         : null;
-    return { meta, playerCount, activeCount: active.length, submitted, names, finalBoard };
+    const readyCount = ready && players ? players.filter((p) => !p.kicked && ready.includes(p.id)).length : null;
+    return { meta, playerCount, activeCount: active.length, submitted, names, finalBoard, readyCount };
   }
 
   async allPlayers(code: string, token: string): Promise<[SessionMeta, PlayerRecord[]]> {

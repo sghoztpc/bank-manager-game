@@ -5,7 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { ScreenView } from "@/lib/view-types";
 import type { Announcement } from "@/lib/types";
 import { api, money, useFrame, usePoll } from "./client";
-import { CaseFile, choiceLabels, Confetti, Debrief, Distribution, Leaderboard, Podium, QuotaChip, Rules, SimpleCountdown, TimerBar } from "./ui";
+import { CaseFile, choiceLabels, Confetti, Debrief, Distribution, Leaderboard, Podium, QuotaChip, Rules, SimpleCountdown, TimerBar, Tutorial } from "./ui";
 
 /** Each announcement shows for this long once the projector is allowed to show it. */
 const ANNOUNCE_MS = 8000;
@@ -67,7 +67,21 @@ export function ScreenApp({ code }: { code: string }) {
           </div>
         )}
 
-        {data.phase === "lobby" && (
+        {data.phase === "lobby" && data.tutorial && (
+          <>
+            <div className="spread">
+              <div className="eyebrow">
+                Join at {host} · code <span className="mono" style={{ color: "var(--accent)" }}>{code}</span>
+              </div>
+              <div className="eyebrow">
+                {data.readyCount ?? 0} / {data.playerCount} ready
+              </div>
+            </div>
+            <Tutorial t={data.tutorial} />
+          </>
+        )}
+
+        {data.phase === "lobby" && !data.tutorial && (
           <div className="grid2" style={{ alignItems: "center" }}>
             <div className="qr" aria-label={`QR code for ${url}`} dangerouslySetInnerHTML={{ __html: svg }} />
             <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
@@ -80,7 +94,9 @@ export function ScreenApp({ code }: { code: string }) {
               </p>
               <p className="muted">and enter the room code</p>
               <div className="joincode">{code}</div>
-              <p className="eyebrow">{data.playerCount} joined</p>
+              <p className="eyebrow">
+                {data.playerCount} joined · {data.readyCount ?? 0} ready
+              </p>
               {/^(localhost|127\.|\[::1\])/.test(host) && (
                 <p className="err">
                   Phones cannot open &quot;localhost&quot;. Open this page using your computer&apos;s network address (for example
@@ -90,7 +106,7 @@ export function ScreenApp({ code }: { code: string }) {
             </div>
           </div>
         )}
-        {data.phase === "lobby" && data.names && data.names.length > 0 && (
+        {data.phase === "lobby" && !data.tutorial && data.names && data.names.length > 0 && (
           <div className="names">
             {data.names.map((n, i) => (
               <span key={i}>{n}</span>

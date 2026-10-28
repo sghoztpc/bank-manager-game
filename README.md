@@ -46,10 +46,13 @@ memory, so state would split.
 
 1. Open the host console and press **Host a new game**. Open the projector view on a second
    screen (or a second browser window).
-2. Join from your phone by scanning the QR code.
-3. Optionally fill the room with simulated classmates:
+2. Join from your phone by scanning the QR code, then press **Ready**.
+3. Optionally fill the room with simulated classmates (they press Ready automatically):
    `npm run bots -- --url <site address> --room <CODE> --players 40`
-4. Press **Start game** in the host console.
+4. Optionally press **Tutorial: demonstrate a case** in the host console. The projector shows the
+   worked example; step through Inspect, Decide and Reveal, then **Back to lobby**.
+5. Press **Start game** once everyone is ready and connected, or **Force start** to go ahead
+   anyway. New players can join only before the start.
 
 When running on your own computer, open the host and projector pages through the computer's
 network address (for example `http://192.168.1.20:3000`), not `localhost`. Otherwise the QR code
@@ -122,6 +125,23 @@ adjustments (each sent twice) and pauses and continues once. The test checks:
 | Ties, fewer than three finishers, finalisation, podium, persistent final ranking | Service tests; Playwright podium (2 finishers, empty third place) | Passed |
 | 47-player run and 100-player capacity with simultaneous outcomes | Load tests on Redis (4× speed) | 47 and 100 passed, 0 errors, 101st refused |
 | Full rehearsal near 15 minutes | Real-time 47-player simulated run on Redis | 650 s (10.8 min) of game, 0 errors, 34,975 Redis commands (about 14 sessions a month on Upstash's free tier). Optimistic, because simulated players stop holding cases open while "thinking"; the worst case is 14.2 min of game plus joining and debrief. It found one bookkeeping bug (timeout timestamps), now fixed with a regression test. A class rehearsal is still needed (DESIGN.md B7). |
+
+### Brief 3 acceptance checks (§5)
+
+| Check | How | Result |
+| --- | --- | --- |
+| Host opens, decides, reveals, resets and closes the example; players can't | Service tests (player tokens rejected on every tutorial action, no tutorial data on phones); Playwright | Passed |
+| Plain-language terms, time units, balance and ROI on the live layout | Playwright screenshots of every step | Passed |
+| Both choices explained without touching live balances, scores, eliminations or quizzes | Service test comparing player records and session before and after | Passed |
+| Lobby and readiness kept during the tutorial | Playwright: a phone pressed Ready during the demo and the host saw it | Passed |
+| Join unready, press Ready, survive a refresh | Service test; Playwright reload | Passed |
+| Ready and Connected distinct | Service test (a ready player offline for 61 s) | Passed |
+| Normal start waits; all-ready doesn't auto-start | Service test; load test at 100 players | Passed |
+| Force start with mixed readiness moves unready phones in | Service test; load test at 47 players | Passed |
+| Start racing a join; repeated starts | Service tests; load test repeats the start | Passed |
+| Tutorial and Ready frozen once running; pause/continue unaffected | Service tests | Passed |
+| New session resets readiness and the tutorial | Service test | Passed |
+| 47 players, 100-player ceiling | Load tests on Redis (4× speed): 0 errors | Passed |
 
 The quiz transcription was checked mechanically against the brief's appendix: 30 of 30
 questions match, with 0 mismatches.

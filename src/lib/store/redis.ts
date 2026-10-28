@@ -157,6 +157,21 @@ export class RedisStore implements Store {
     return Object.fromEntries(hashEntries(raw).map(([k, v]) => [k, Number(v)]));
   }
 
+  async setReady(code: string, playerId: string, ready: boolean) {
+    if (!ready) {
+      await this.redis.srem(keys.ready(code), playerId);
+      return;
+    }
+    const p = this.redis.pipeline();
+    p.sadd(keys.ready(code), playerId);
+    p.expire(keys.ready(code), TTL);
+    await p.exec();
+  }
+
+  async readyIds(code: string) {
+    return this.redis.smembers(keys.ready(code));
+  }
+
   async touch(code: string, playerId: string, at: number) {
     await this.redis.zadd(keys.seen(code), { score: at, member: playerId });
   }
