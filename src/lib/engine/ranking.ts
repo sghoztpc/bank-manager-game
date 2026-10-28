@@ -9,11 +9,16 @@ export function compareStanding(a: PlayerRecord, b: PlayerRecord): number {
   return b.balance - a.balance || b.correct - a.correct;
 }
 
+/** Stable order for rows sharing a rank: join time, then name, then id. It never changes ranks. */
+export function displayOrder(a: PlayerRecord, b: PlayerRecord): number {
+  return a.joinedAt - b.joinedAt || a.name.localeCompare(b.name) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+}
+
 /** Ranks active players in place (keeping their previous rank for the rank-change arrow). */
 export function rankPlayers(players: PlayerRecord[]): PlayerRecord[] {
   const active = players
     .filter((p) => !p.kicked && p.status === "active")
-    .sort((a, b) => compareStanding(a, b) || a.joinedAt - b.joinedAt);
+    .sort((a, b) => compareStanding(a, b) || displayOrder(a, b));
   active.forEach((p, i) => {
     p.prevRank = p.rank;
     p.rank = i > 0 && compareStanding(active[i - 1], p) === 0 ? active[i - 1].rank : i + 1;

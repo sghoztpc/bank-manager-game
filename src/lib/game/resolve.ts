@@ -51,7 +51,7 @@ export function resolveItem(
   players: PlayerRecord[],
   subs: Record<string, Submission>,
   views: Record<string, number>,
-  /** Decision items: the server deadline; timeouts are ordered at this moment. */
+  /** When the window closed (the deadline, or earlier if it closed early); timeouts are ordered here, after submissions. */
   deadlineAt: number,
   eliminations: EliminationRecord[],
 ): Resolution {
@@ -71,7 +71,7 @@ export function resolveItem(
     // One authoritative order: when the server received each decision (timeouts at the
     // deadline), then join order. If several players hit zero at once, earlier events take
     // the remaining elimination slots and later ones get the safety floor.
-    results.sort((a, b) => a.at - b.at || a.p.joinedAt - b.p.joinedAt);
+    results.sort((a, b) => a.at - b.at || Number(a.choice === null) - Number(b.choice === null) || a.p.joinedAt - b.p.joinedAt);
     for (const { p, choice, ms, at, r } of results) {
       const b = applyBalanceChange(p, r.delta, { cause: `Case ${item.decisionNo} · ${r.label}`, itemIndex, at }, eliminations);
       if (r.ok) {

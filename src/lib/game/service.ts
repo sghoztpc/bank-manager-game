@@ -3,7 +3,7 @@ import { ADJUSTMENT_MAX, CAPACITY, ECONOMY, ELIMINATION, NETWORK, timeScale, tim
 import { applyBalanceChange, floorActive, previewBalanceChange } from "../engine/elimination";
 import { decisionClosesAt, nextPhase, pause, resume } from "../engine/phases";
 import { assignQuiz } from "../engine/quiz";
-import { toLeaderEntry } from "../engine/ranking";
+import { displayOrder, toLeaderEntry } from "../engine/ranking";
 import { buildSchedule } from "../engine/schedule";
 import { getStore } from "../store";
 import type { Store } from "../store/types";
@@ -247,8 +247,10 @@ export class GameService {
       this.store.getSubmissions(code, i),
       fresh.phase === "open" ? this.store.getViews(code, i) : Promise.resolve({}),
     ]);
-    // Timeouts are ordered after every accepted submission (which can land in the grace window).
-    const deadlineAt = fresh.phase === "open" && fresh.openedAt !== null ? decisionClosesAt(fresh.openedAt, this.timingFor(fresh)) : (fresh.phaseEndsAt ?? this.now());
+    // Timeouts happen when the window closes: its deadline, or now if it closed early (never a
+    // future time). Every accepted submission was received no later than this.
+    const closesAt = fresh.phase === "open" && fresh.openedAt !== null ? decisionClosesAt(fresh.openedAt, this.timingFor(fresh)) : (fresh.phaseEndsAt ?? this.now());
+    const deadlineAt = Math.min(closesAt, this.now());
     const eliminations = [...fresh.eliminations];
     const res = resolveItem(fresh, i, players, subs, views, deadlineAt, eliminations);
     await this.store.putPlayers(code, res.players);
@@ -548,7 +550,7 @@ export class GameService {
       fullFinal && players
         ? players
             .filter((p) => !p.kicked && p.status === "active")
-            .sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || a.joinedAt - b.joinedAt)
+            .sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || displayOrder(a, b))
             .map(toLeaderEntry)
         : null;
     return { meta, playerCount, activeCount: active.length, submitted, names, finalBoard };

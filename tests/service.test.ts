@@ -302,6 +302,23 @@ describe("elimination quota", () => {
     expect(r.balance).toBe(0);
   });
 
+  it("stamps timeouts of an early-closed case at the close, never after a later elimination", async () => {
+    const { code, hostToken, players } = await setup(["Slow", "Fast"]);
+    const [slow, fast] = players;
+    await svc.hostAction(code, hostToken, "start");
+    const m = await toPhase(code, "open", players);
+    clock.advance(NETWORK.activeWindowMs + 1); // Slow stops polling, so the room does not wait for it
+    await poll(code, fast);
+    await svc.submit(code, fast.playerId, fast.token, m.itemIndex, "d"); // closes early
+    clock.advance(500);
+    await adjust(code, hostToken, slow, "subtract", ECONOMY.startingBalance * 2);
+    const r = await rec(code, slow);
+    const timeout = r.history.find((h) => h.kind === "decision")!;
+    const elimination = (await meta(code)).eliminations[0];
+    expect(timeout.c).toBeNull();
+    expect(timeout.at).toBeLessThanOrEqual(elimination.at);
+  });
+
   it("does not wait for eliminated players before closing early", async () => {
     const { code, hostToken, players } = await setup(["Out", "In"]);
     await adjust(code, hostToken, players[0], "subtract", ECONOMY.startingBalance);

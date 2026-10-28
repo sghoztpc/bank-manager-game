@@ -120,7 +120,7 @@ adjustments (each sent twice) and pauses and continues once. The test checks:
 | VND and ranking consistent after every money change | Load-test invariants; unit tests for whole VND | Passed |
 | Ties, fewer than three finishers, finalisation, podium, persistent final ranking | Service tests; Playwright podium (2 finishers, empty third place) | Passed |
 | 47-player run and 100-player capacity with simultaneous outcomes | Load tests on Redis (4× speed) | 47 and 100 passed, 0 errors, 101st refused |
-| Full rehearsal near 15 minutes | Real-time 47-player simulated run on Redis | Pending: result to be recorded here; a class rehearsal is still needed (DESIGN.md B7) |
+| Full rehearsal near 15 minutes | Real-time 47-player simulated run on Redis | 650 s (10.8 min) of game, 0 errors, 34,975 Redis commands (about 14 sessions a month on Upstash's free tier). Optimistic, because simulated players stop holding cases open while "thinking"; the worst case is 14.2 min of game plus joining and debrief. It found one bookkeeping bug (timeout timestamps), now fixed with a regression test. A class rehearsal is still needed (DESIGN.md B7). |
 
 The quiz transcription was checked mechanically against the brief's appendix: 30 of 30
 questions match, with 0 mismatches.
