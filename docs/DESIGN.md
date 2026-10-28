@@ -1,11 +1,17 @@
 # Bank Manager: design decisions
 
-This file answers the follow-up analysis required by section 10 of the implementation brief. All
-numbers live in `src/lib/config.ts`. `npm run simulate` re-checks the strategy table after any change.
+This file records the decisions behind the game: Part A answers section 10 of Implementation
+Brief 1; Part B covers Implementation Brief 2, which supersedes Brief 1's "keep everyone playing"
+preference and its points/credits display. All numbers live in `src/lib/config.ts`;
+`npm run simulate` re-checks the strategy table after any change.
 
-The brief fixed these, and they are not open: 18 loan cases, 6 fraud cases at decision positions
-4, 8, 12, 16, 20 and 24, 5 bonus questions after decisions 5, 10, 15, 20 and 24, a money-only final
-question, a 20-second maximum per decision, and no speed bonus after 15 seconds.
+Settled by the briefs (not open): 18 loan cases and 6 fraud cases at decisions 4, 8, 12, 16, 20 and
+24; quizzes after decisions 5, 10, 15, 20 and 24 (power-ups for the first four, money only for the
+last); a 20-second maximum per decision; speed bonus 5/4/3% and none after 15 s; timeout means
+decline/block; the first five banks to reach zero are eliminated, then a 1 VND floor; VND
+throughout; five random quiz questions per player.
+
+# Part A: the core game
 
 ## 1. Pacing: host-paced waves that advance automatically
 
@@ -17,9 +23,9 @@ Everyone sees the same case at the same moment. The server clock moves the sessi
 | Get ready | 2 s | Case number shown, content withheld |
 | Decision | up to 20 s | Ends early once every connected player has answered |
 | Reveal | 6 s | Outcome, explanation, room distribution |
-| Bonus question | 15 s | Also ends early when everyone has answered |
-| Answer + leaderboard | 7 s | The shared leaderboard break |
-| Final | until closed | Podium, leaderboard, debrief |
+| Quiz | 25 s | Each player's own question; ends early when everyone has answered |
+| Quiz answer + leaderboard | 7 s | The shared leaderboard break |
+| Final | until closed | Results frozen; the host reveals the podium |
 
 Why host-paced:
 
@@ -30,129 +36,101 @@ Why host-paced:
 Individual pacing would feel more like desk work, but it would break the shared debrief and the
 collision rules, and it would need difficulty normalisation before players could be ranked fairly.
 
-The host can pause, resume, close a case early, or skip a reveal. Nothing runs in the background:
+The host can pause, continue, close a case early, skip a reveal, or end the session. Nothing runs in the background:
 every request first brings the session clock up to date (`GameService.tick`), so the game works on
 serverless functions with no cron.
 
-## 2. Money model
+## 2. Money model (VND)
 
-All money is **credits (Cr)**: fictional classroom points. The interface and the rules say they are
-not banking forecasts. Customer files use realistic-looking ₫ amounts for flavour, but every loan
-file commits the same desk stake.
+All money is **VND**, described to players as a fictional classroom bank balance. Every amount is a
+whole number of VND, rounded to the nearest VND with halves away from zero (`vnd()` in
+`config.ts`). ROI is shown as a percentage, separately from VND.
 
 | Item | Value | Derivation |
 | --- | --- | --- |
-| Starting balance | 10,000 Cr | Same for everyone |
-| Stake per loan file | 2,000 Cr | Same for every case, so no single file dominates |
-| Approve, loan repaid | +18% to +22% of stake (about +400) | Reference: 20%, a compressed multi-year return |
-| Approve, loan defaults | −25% to −35% of stake (about −600) | Reference: 30%, the loss after collateral recovery |
-| Decline | +3% of stake (+60) | Stake goes into short-term government bills instead |
-| Fraud desk, right call | +120 | 30% × the reference successful loan gain (400) |
-| Fraud let through | −180 | 30% × the reference failed loan loss (600) |
-| Genuine customer blocked | −60 | Half the fraud reward: complaint handling and goodwill |
-| Final question, correct | +200 | 2% × the common starting balance |
+| Starting balance (bank capital) | 300.000.000 VND | Same for everyone |
+| Exposure per loan file | 500.000.000 VND | Same for every case, so no single file dominates |
+| Approve, loan repaid | +18% to +22% of the exposure (about +100.000.000) | Reference: 20%, a compressed multi-year return |
+| Approve, loan defaults | −25% to −35% (about −150.000.000) | Reference: 30%, the loss after collateral recovery |
+| Decline | +3% (+15.000.000) | The money goes into government bills instead |
+| Fraud desk, right call | +30.000.000 | 30% × the reference successful loan gain |
+| Fraud let through | −45.000.000 | 30% × the reference failed loan loss |
+| Genuine customer blocked | −15.000.000 | Half the fraud reward |
+| Final quiz, correct | +6.000.000 | 2% × the common starting balance |
 
-Outcomes are **deterministic per case** and revealed right after the case closes. Each case is
-written with one correct call and a story that explains it. Deterministic outcomes keep the
-competition fair (no luck between equally good decisions) and make every reveal teachable. A
-probabilistic model would teach "good decisions can lose money", but with only 18 loans the noise
-would decide the ranking.
+Brief 1 used 10,000 credits against a 2,000 stake. **Under that scale nobody could ever reach
+zero**: the worst possible game ended near half the starting balance, which would make Brief 2's
+elimination rule unreachable. So Brief 2 needed a rebalance, not a relabel: the money is now in VND,
+and the starting capital is **0.6 × one loan's exposure**. Every percentage, and so every ratio
+between outcomes, is unchanged. The framing is real banking: a bank lends far more than its own
+capital, so a few bad loans can wipe out its equity.
 
-### Sessions are comparable by construction
+Outcomes are **deterministic per case** and revealed right after the case closes, so the
+competition is fair and every reveal is teachable. Every session draws exactly 11 repaid and 7
+defaulted loans, plus 3 fraudulent and 3 genuine fraud cases, from a seeded PRNG.
 
-Every session draws exactly 11 repaid and 7 defaulted loans, plus 3 fraudulent and 3 genuine fraud
-cases. Only *which* cases appear, and their order, vary. The draw comes from a seeded PRNG, so it
-can be reproduced from the session seed.
+### Strategy check (`npm run simulate`, 2,000 draws, 24 decisions, quizzes excluded)
 
-### Strategy check (`npm run simulate`, 2,000 draws, 24 decisions, bonus questions excluded)
+| Strategy | Total (million VND) | Reaches 0 VND |
+| --- | ---: | ---: |
+| Approve / allow everything | −10m | 45.7% |
+| Decline / block everything | +325m | 0% |
+| Never answer (timeouts) | +315m | 0% |
+| Coin flip | +162m | 22.3% |
+| 60% accurate | +407m | 9.4% |
+| 70% accurate | +653m | 3.5% |
+| 80% accurate | +891m | 0.9% |
+| 90% accurate | +1.141m | 0.1% |
+| Perfect, fast | +1.426m | 0% |
 
-| Strategy | Loans | Fraud desk | Total |
-| --- | ---: | ---: | ---: |
-| Approve / allow everything | +124 | −162 | −38 |
-| Decline / block everything | +1,101 | +198 | +1,299 |
-| Never answer (all timeouts) | +1,080 | +180 | +1,260 |
-| Coin flip | +633 | +13 | +647 |
-| 60% accurate | +1,452 | +173 | +1,625 |
-| 70% accurate | +2,298 | +313 | +2,611 |
-| 80% accurate | +3,114 | +452 | +3,566 |
-| 90% accurate | +3,966 | +603 | +4,569 |
-| Perfect, slow (16 s) | +4,711 | +720 | +5,431 |
-| Perfect, fast (4 s) | +4,946 | +756 | +5,702 |
+- Approving everything loses money and goes bankrupt in almost half of all draws. Declining
+  everything is safe but earns about a quarter of what good judgement earns; players beat it from
+  about 57% accuracy.
+- The fraud desk is about 13% of a perfect game's earnings, so lending decides the ranking.
+- **A mixed class of 47** (2 approve-all, 5 guessers, then 12/15/10/3 at 60/70/80/90% accuracy):
+  on average 3.8 banks reach zero per session (median 3, 10th–90th percentile 0–9), and the quota
+  of five fills in about 36% of sessions. The quota is a maximum, not a target, as Brief 2 requires.
 
-- Approving everything loses money.
-- Declining everything is the "cautious bank": it keeps capital but earns about a quarter of what
-  good judgement earns. Players beat it from about 57% accuracy. That matches the brief: declining
-  is a smaller return, not a penalty, and refusing all risk still falls behind.
-- Lending decides the ranking. The fraud desk is about 13% of a perfect game's earnings.
-- No strategy can drive the balance below zero. The worst possible session (all 7 bad loans at
-  their largest losses, every fraud call wrong) ends near 5,000 Cr. Depleted balances therefore
-  cannot happen. If the numbers change, the code still keeps negative balances in play rather than
-  eliminating anyone, and the unit test `no strategy can deplete the starting balance` guards the
-  margin.
+## 3. The 30% fraud weighting
 
-## 3. The 30% fraud weighting, precisely
+- **Reward** = 30% of the reference successful loan gain (100.000.000) = **30.000.000 VND**, for
+  either right call: blocking fraud or clearing a genuine payment.
+- **Losses are scaled separately**: missed fraud = 30% of the reference failed loan loss
+  (150.000.000) = **−45.000.000**; false block = half the reward = **−15.000.000**.
 
-- **Positive reward** = 30% of the *reference successful loan gain* (stake × 20% = 400 Cr) = **120 Cr**.
-  A right call earns it either way: blocking fraud, or clearing a genuine payment. Correctly
-  clearing genuine customers is part of good screening. If it earned nothing, "block everything"
-  would earn half of a perfect fraud score.
-- **Losses are scaled separately**. Missed fraud = 30% of the *reference failed loan loss*
-  (600 Cr) = **−180 Cr**. A false block = half the reward = **−60 Cr**. The asymmetry mirrors
-  reality: a missed fraud costs the bank more than an annoyed customer does.
-- Block-everything earns +180 over six fraud cases, against +720 for perfect play.
+## 4. The 2% final-quiz reward
 
-## 4. The 2% final-question reward
-
-The reference is the **common starting balance (10,000 Cr)**, so a correct answer pays **200 Cr**,
-the same for every player. It is not 2% of the player's own balance, and it is not two percentage
-points of ROI. It awards no power-up.
+The reference is the **common starting balance (300.000.000 VND)**, so a correct final answer pays
+**6.000.000 VND**, the same for every player. It is not 2% of a player's own balance or two ROI
+points, and it grants no power-up.
 
 ## 5. Speed bonus
 
-- It is a **relative multiplier on the positive earnings of a correct, submitted decision**
-  (+5% / +4% / +3%). It is not percentage points added to ROI: those would add about 100 Cr per
-  case and swamp the decision itself.
-- Tiers are measured in milliseconds and the boundaries are inclusive: ≤5,000 → 5%;
-  ≤10,000 → 4%; ≤15,000 → 3%; above 15,000 → 0. A submission in the last 5 seconds earns
-  nothing, as the brief requires.
-- It applies to fraud cases on the same terms (+6 Cr at most). One rule is easier to explain.
-- It does not reward guessing. The best bonus on a loan is about +20 Cr, while a wrong approval
-  costs about −600 Cr. Fast and perfect beats slow and perfect by under 300 Cr over the session,
-  less than one loan. Wrong and timed-out decisions never earn a bonus.
-- **When the clock starts.** The server stamps the case's opening time. Each phone reports the
-  first moment it actually receives the case, and the player's response time is measured from
-  then, so a slow connection does not cost bonus time. This head start is capped at 2 s, so
-  nobody can stall to read a neighbour's screen. Pauses are excluded.
-- **Deadline.** Submissions are judged by the server's receive time. The window is 20 s after
-  opening, plus a 400 ms network grace for answers already in flight. An answer that lands in the
-  grace counts with no bonus. Anything later is refused, and the phone locks its buttons at 20.0 s
-  on its own clock.
+A **relative multiplier on the positive earnings of a correct, submitted decision**
+(+5% / +4% / +3%, inclusive boundaries at 5.000, 10.000 and 15.000 ms; nothing after 15 s). It
+applies to fraud cases too. The best loan bonus is about +5.000.000 VND, while a wrong approval
+costs about −150.000.000 VND, so it never rewards guessing. Each phone's clock starts when the case
+reaches it (head start capped at 2 s); pauses are excluded; the server judges by receive time, with
+a 400 ms network grace that never earns a bonus.
 
 ## 6. Timeouts
 
-No decision by the deadline is an automatic decline (loan) or block (fraud case), with that case's
-normal outcome. The outcome is applied, but a timeout never counts as a correct decision, which is
-the main tie-breaker, and never earns a speed bonus. Doing nothing (+1,260) is not a safe escape:
-it earns less than declining (+1,299) and far less than reasonable play.
+No decision by the deadline is a decline (loan) or block (fraud), with that outcome; it never
+counts as a correct decision and never earns a bonus.
 
-## 7. Ranking and tie-breaks
+## 7. Ranking and ties
 
-1. Money, highest first.
-2. Correct decisions (questions excluded), more first.
-3. Total response time on those correct decisions, less first.
-4. Players equal on all three share a rank.
+Confirmed by Brief 2: active players by **current VND balance**, highest first.
+Adopted from Brief 2's recommendation: then **correct decisions**; players equal on both **share a
+competitive rank** (1, 1, 3). Tied rows are listed in join order, which does not break the tie.
+Brief 1's third tie-breaker (time on correct answers) is dropped. Eliminated players are not ranked;
+they are listed below in a separate "Eliminated" section by elimination order at 0 VND.
 
-## 8. Bonus questions and power-ups
+## 8. Power-ups
 
-- Questions live in `src/lib/content/questions.ts`. **They are placeholders and must be checked
-  against the group's presentation.** Slots 3 and 4 cover liquidity risk and interactions between
-  risks, as the brief asks.
-- Questions 1 to 4: a correct answer grants an inventory token of kind `unassigned`, with no
-  effect yet. Question 5 pays 200 Cr and grants no token. A wrong answer has no penalty.
-- The power-up catalogue is deliberately not designed here. `src/lib/engine/powerups.ts` documents
-  the extension points: a registry, the grant rule, and where to apply effects. All balance
-  changes happen in one function (`resolveItem`), which is where effects belong.
-- The base game is completely playable without any power-up.
+Correct answers to quizzes 1–4 grant an `unassigned` power-up token with no effect yet; the
+catalogue is a separate task (`src/lib/engine/powerups.ts` documents the extension points).
+Eliminated banks keep their tokens but can no longer act, so they can never use one.
 
 ## 9. Case pool and randomisation
 
@@ -165,6 +143,7 @@ it earns less than declining (+1,299) and far less than reasonable play.
 - Case explanations name the discipline: credit risk, payment fraud screening, scam / social
   engineering, or cybersecurity incident. The fraud title and category are hidden until the reveal
   because they would give the answer away.
+- Customer documents quote amounts in the same VND format as balances ("450.000.000 VND").
 - Randomisation selects and orders **whole cases**. It never edits numbers, which keeps every case
   internally consistent. Varying amounts would need every explanation templated and re-checked.
 
@@ -212,10 +191,10 @@ Phones / projector / host  --poll (HTTPS JSON)-->  Next.js route handlers on Ver
 | --- | --- |
 | `src/lib/config.ts` | Every balancing and timing number |
 | `src/lib/content/` | Cases and questions |
-| `src/lib/engine/` | Pure logic: schedule, scoring, phase clock, ranking, power-up hook |
+| `src/lib/engine/` | Pure logic: schedule, scoring, phase clock, ranking, elimination rule, quiz assignment, power-up hook |
 | `src/lib/game/` | Service, the resolution step, and per-role view builders |
 | `src/lib/store/` | `Store` interface, with Redis (production) and in-memory (local, tests) |
-| `src/app/api/sessions/...` | Route handlers: create, join, state, submit, host, export |
+| `src/app/api/sessions/...` | Route handlers: create, join, state, submit, host, adjust, export |
 | `src/components/` | Player, host and projector apps |
 
 ## 12. Vercel, shared persistence and free tiers
@@ -225,27 +204,167 @@ Phones / projector / host  --poll (HTTPS JSON)-->  Next.js route handlers on Ver
   `KV_REST_API_TOKEN`. Choose a database region close to the function region. Without these
   variables the app refuses to create games on Vercel, because each function instance would
   otherwise have its own memory.
-- **Redis usage.** A 47-player, real-time simulated session used **35,729 Redis commands**. That
-  count includes the commands inside Lua scripts, so it is an upper bound. Upstash's free tier
-  allows 500,000 commands a month (checked October 2026; it replaced the old 10,000-a-day cap), so
-  it covers about 14 sessions a month. Pay-as-you-go is about $0.20 per 100,000 commands, under
-  $0.10 a session.
+- **Redis usage.** See the README's verification section for the measured command count of a
+  47-player real-time session. Upstash's free tier allows 500,000 commands a month (checked
+  October 2026; it replaced the old 10,000-a-day cap). Pay-as-you-go is about $0.20 per 100,000
+  commands.
 - **Vercel Hobby** is for non-commercial, personal use. A class activity run by students fits, but
   a school or company account may need Pro. Sources disagree on the exact Hobby invocation
   allowance, so check the current Hobby limits page. A session is in the low tens of thousands of
   short function invocations.
 
-## 13. Time budget
+# Part B: Implementation Brief 2
 
-Worst case, with every case running its full 20 s:
+## B1. Gap analysis (state of the app before Brief 2)
 
-24 × (2 + 20 + 6) + 5 × (15 + 7) + 20 = **802 s ≈ 13.4 min** of game, plus about 1.5 min joining
-and about 1.5 min final results and debrief, which is ≈ 16 minutes.
+| Brief 2 area | Before | Change |
+| --- | --- | --- |
+| §1 Elimination | Nobody could reach zero; no elimination | Rebalanced money (A2); one balance rule used everywhere; persisted log; Game Over; announcements |
+| §2 VND | Credits ("Cr") | Stored values rescaled to VND; Vietnamese formatting; case documents converted |
+| §3 Host / player roles | Start, pause, resume, skip, kick | Continue (saved time, minimum 3 s); End session; balance adjustments with preview, idempotency and audit log; elimination log; projector toggles |
+| §4 Leaderboard and podium | Top 10; speed as third tie-break; no podium control | Shared ranks; eliminated section; rank-change arrows; host-revealed podium with ties; confetti; full final ranking |
+| §5 Quiz | One fixed set of 5 questions for the whole room | 30-question pool; 3 held back; balanced random five per player; shuffled options with stable ids; persisted |
 
-Cases close early as soon as every connected player has answered. The real-time simulated
-47-player run took 630 s (10.5 min) of game. That run is optimistic, because simulated players
-that are still "thinking" stop polling and stop holding cases open. So plan on 13 to 16 minutes in
-total. The host can also press **Next** to cut a reveal short. A full rehearsal
-with a real class is still required: the brief's 15-minute target is not met in the worst case.
-To save time without touching settled rules, start the game while late joiners are still arriving
-(they are allowed in) and shorten the debrief.
+## B2. Elimination (§1)
+
+**Confirmed rule** (`src/lib/engine/elimination.ts`, the only place that applies balance changes):
+
+1. The caller has checked the event is valid and not already applied (per-player `lastResolved`
+   for gameplay; adjustment ids for host changes).
+2. Compute the resulting balance.
+3. Above zero: apply it.
+4. Zero or below, fewer than five eliminated: balance set to **0 VND**, the bank is eliminated, and
+   it takes the next slot.
+5. Zero or below, five already eliminated: the bank stays active at **1 VND**.
+
+"Touch zero" means a computed balance of zero or below, so a large loss cannot jump past it.
+
+**Authoritative order.** Every balance change happens under the session lock, so changes are
+applied one at a time. Within one case settlement, events are ordered by **when the server received
+each decision**; timeouts count at the deadline, and remaining ties go to join order. If several
+banks fail on the same case, the earliest events take the remaining slots and later ones get the
+floor. Host adjustments are ordered by when they commit.
+
+**Persistence and idempotency.** The elimination log (order, bank, cause, change, balance before,
+time) lives in the session record in Redis, so a host refresh or a server restart keeps the quota.
+A resubmitted answer is refused (item closed, or bank eliminated); a retried settlement skips banks
+already settled; a repeated adjustment id returns the original record. None of these can take a
+second slot or announce twice. Pausing changes nothing. A new session (new room code) starts
+with an empty quota.
+
+**Player experience.** The eliminated phone shows **Game Over**: nickname, elimination number,
+0 VND, and the outcome that caused it (for example "Case 7 · Loan defaulted: −150.000.000 VND took
+the balance from 120.000.000 VND to zero"). This persists through refresh. The server refuses that
+bank's case and quiz answers; it receives no more cases or quizzes, so a bank eliminated on case 5,
+10, 15, 20 or 24 never receives that milestone's quiz reward. The player can keep watching the
+leaderboard and the final results.
+
+**Host and projector.** The host console shows **Eliminations n / 5**, the elimination log, and
+the adjustment log. The projector shows the quota chip and a brief banner (not full screen) for
+each elimination, plus a notice when the fifth elimination brings in the **1 VND safety floor**.
+Banners never appear while a case or quiz is open: anything committed during one waits for the
+reveal. Each banner shows for 8 seconds and does not replay after a reload. The host can switch
+announcements off or dismiss the current one.
+
+**Recommended defaults adopted.** A host deduction follows the same rule and can take an unused
+slot; the preview shows this before it is applied ("becomes elimination 3 of 5", or "stops at the
+1 VND safety floor"). A positive adjustment cannot revive an eliminated bank; it is refused.
+
+## B3. VND (§2)
+
+Stored values were rescaled, not just relabelled (A2). All balances, rewards, penalties, quiz
+rewards, adjustments, leaderboard values and the CSV export are whole VND. They are formatted as
+`1.000.000 VND` and `+50.000 VND` by one formatter that does not depend on the device's locale
+data. Customer documents use the same format ("6.000.000.000 VND"). "Credit risk" is unchanged
+because it names a risk, not a currency.
+
+## B4. Host and player roles (§3)
+
+- **Separate surfaces.** `/play/CODE` is a player's own bank. `/host/CODE` is the session console:
+  roster, status, start, pause, continue, close or next, end session, adjustments, elimination and
+  adjustment logs, projector toggles, podium reveal, export. `/screen/CODE` is the public projector
+  view.
+- **Permissions are enforced on the server.** Host routes require the host key (only its SHA-256
+  hash is stored); player tokens and room codes are rejected there (tests cover pause, start,
+  adjust, preview and the host snapshot). Player responses contain only that player's own quiz
+  question, and its answer only after the quiz closes. The projector and host never receive
+  individual questions.
+- **Adjustments.** Choose a player, add or subtract a positive whole VND amount (up to
+  10.000.000.000), and record a reason (required). **Preview** shows before → after and any
+  elimination or floor consequence; **Apply** commits once per form key, so double clicks and
+  retries cannot repeat it. The log records the id, player, amount, operation, reason, actor (the
+  host key's fingerprint), before, after, outcome and time. The player's balance, the host view and
+  the rankings update in the same write, and the phone shows a one-time notice. Adjustments are
+  refused once the podium is revealed.
+- **Pause / continue.** Pause freezes the phase timer for everyone and phones show "Paused".
+  Continue restores the *saved* remaining time. Brief 2 rules out both fresh timers and instant
+  timeouts, so a decision or quiz window that was paused with under **3 seconds** left gets 3
+  seconds back.
+- **Submission racing a pause.** The authoritative order is the server's: a submission is accepted
+  if the server processed it while the session was running. If the pause committed first, it is
+  refused with "The game is paused" and the player answers after Continue. Response time is
+  measured at receipt and pauses are excluded, so a race never changes the speed tier.
+- **End session.** This explicit action (with confirmation) settles any open case or quiz with the
+  answers already received, then freezes the results. Normal completion after quiz 5 reaches the
+  same final state. Phones and the projector show "Results are final" until the host presses
+  **Reveal podium**.
+- **Host reconnect.** The host key in `localStorage` (or the copied host link) reconnects to the
+  same room. Nothing on the host side creates a second game, and **Host a new game** always opens
+  a new room code, distinct from pause and continue.
+
+## B5. Leaderboard, effects and final top three (§4)
+
+- Rankings are computed on the server after every case settlement, quiz reward and host
+  adjustment, and stored with the session, so reconnecting restores the same rank and balance.
+- Phones highlight their own row ("you"); leaderboard rows show ▲/▼ rank changes; the phone shows
+  its own rank change and a short colour flash when its balance changes. Nothing replays after a
+  reconnect, effects never block input or hide deadlines, and reduced motion turns them off.
+- **Podium**: every active bank ranked 1–3, so a tied third place shows all tied banks. Empty
+  places stay empty ("No bank in this place"), and eliminated banks are never promoted. Confetti
+  plays once per device (on the projector and on podium phones) when the host reveals it. The full
+  final ranking (every active bank, then the eliminated section) stays available after the podium
+  and after refresh.
+
+## B6. Randomised quiz (§5)
+
+- **Pool**: all 30 source questions are transcribed word for word with the supplied keys (a script
+  check against the brief's appendix found 0 mismatches; keys are 23 B and 7 A).
+- **Held back pending review** (`playable: false`, with the proposed correction stored with each
+  question; the source wording and keys are untouched):
+  - **Q02** asks for the *spread* between the lending and borrowing rates, but the key is *net
+    interest margin* (net interest income ÷ earning assets). Proposed fix: offer "interest rate
+    spread" as the answer, or reword the stem to describe NIM.
+  - **Q09**: moving a deposit from Bank A to Bank B leaves the aggregate money supply unchanged.
+    The keyed option says it contracts, and option D ("nothing changes in the banking system")
+    ignores the liquidity shift. Proposed fix: "Total money supply is unchanged; liquidity and
+    reserves shift from Bank A to Bank B".
+  - **Q14**: SVB's securities were mainly US Treasuries and agency mortgage-backed securities, not
+    "guaranteed corporate bonds", and the direct cause was a deposit run after losses were
+    realised. Proposed fix: reword it and check it against the presentation's case evidence.
+  27 questions remain playable.
+- **Assignment** (`src/lib/engine/quiz.ts`): five distinct questions per player, one per slot,
+  drawn independently for each player from a PRNG seeded by the session and player id, and stored
+  on the player record at join, so refreshing never rerolls them. Late joiners get theirs at join.
+- **Balanced sampling**: slot 1 warm-up, slot 2 tricky, slot 3 core, slot 4 hardcore, slot 5 core.
+  Every player gets the same category mix, and the money-paying slot 5 is always a core-topic
+  question. This evens out difficulty but does not guarantee it.
+- **Option shuffle**: each player sees the four options in their own stored order. Each option
+  keeps its id (its source letter), the phone submits that id, and grading compares ids, so
+  shuffling cannot change the answer, and "always pick B" no longer works (tested: the correct
+  answer lands in each position about 25% of the time).
+- **Grading**: once, at the quiz's settlement; a power-up token for quizzes 1–4 or 6.000.000 VND
+  for quiz 5; wrong answers get nothing and lose nothing.
+- **Timing**: **25 seconds**, separate from the 20-second decision timer, because each option is
+  about 100 characters. The window closes early once everyone connected has answered.
+
+## B7. Time budget
+
+Worst case, with every window running to its limit:
+
+24 × (2 + 20 + 6) + 5 × (25 + 7) + 20 = **852 s ≈ 14.2 min** of game, plus about 1.5 min
+joining and about 1.5 min for the podium and debrief, about 17 minutes in total.
+
+Windows close early when everyone connected has answered; the README records the real-time
+rehearsal result. Brief 2's longer quiz adds about 50 s to the worst case. To stay near 15 minutes:
+start while latecomers are still joining (they are allowed in), use **Next** to shorten reveals,
+and keep the debrief brief. A rehearsal with a real class is still needed.

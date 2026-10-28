@@ -3,8 +3,12 @@
 import QRCode from "qrcode";
 import { useCallback, useEffect, useState } from "react";
 import type { ScreenView } from "@/lib/view-types";
-import { api, cr, useFrame, usePoll } from "./client";
-import { CaseFile, choiceLabels, Debrief, Distribution, Leaderboard, QuestionOptions, Rules, SimpleCountdown, TimerBar } from "./ui";
+import type { Announcement } from "@/lib/types";
+import { api, money, useFrame, usePoll } from "./client";
+import { CaseFile, choiceLabels, Confetti, Debrief, Distribution, Leaderboard, Podium, QuotaChip, Rules, SimpleCountdown, TimerBar } from "./ui";
+
+/** Each announcement shows for this long once the projector is allowed to show it. */
+const ANNOUNCE_MS = 8000;
 
 function useJoinUrl(code: string) {
   const [url, setUrl] = useState("");
@@ -22,11 +26,11 @@ export function ScreenApp({ code }: { code: string }) {
   const fetcher = useCallback(() => api<ScreenView>(`/api/sessions/${code}/state?role=screen`), [code]);
   const { data, error, serverNow } = usePoll<ScreenView>(fetcher, (d, now) => {
     if (d.phase === "lobby") return 1500;
-    if (d.phase === "final") return 10000;
+    if (d.phase === "final") return d.podiumRevealed ? 10000 : 1500;
     const toEnd = d.phaseEndsAt === null ? 1000 : Math.max(0, d.phaseEndsAt - now) + 60;
     return Math.min(1000, toEnd);
   });
-  useFrame(!!data && data.status === "running" && data.phase !== "lobby" && data.phase !== "final");
+  useFrame(!!data && data.phase !== "lobby" && !(data.phase === "final" && data.podiumRevealed));
 
   if (!data) {
     return (
@@ -41,6 +45,8 @@ export function ScreenApp({ code }: { code: string }) {
   const now = serverNow();
   const item = data.item;
   const host = url.replace(/^https?:\/\//, "").replace(/\/play\/.*/, "");
+  const activeBanks = data.playerCount - data.quota.used;
+  const sideBoard = data.settings.boardOnScreen && data.leaderboard && data.phase !== "qreveal" && data.phase !== "final" && data.phase !== "lobby";
 
   return (
     <main className="screen">
@@ -50,11 +56,13 @@ export function ScreenApp({ code }: { code: string }) {
             <div className="eyebrow">
               Bank Manager · join at {host} · code <span className="mono" style={{ color: "var(--accent)" }}>{code}</span>
             </div>
-            <div className="eyebrow">
-              {item?.type === "decision" && `Case ${item.decisionNo} / ${data.totalDecisions}`}
-              {item?.type === "question" && `Bonus question ${item.questionNo} / 5`}
-              {" · "}
-              {data.playerCount} players
+            <div className="row">
+              <QuotaChip quota={data.quota} />
+              <span className="eyebrow">
+                {data.phase !== "final" && item?.type === "decision" && `Case ${item.decisionNo} / ${data.totalDecisions} · `}
+                {data.phase !== "final" && item?.type === "question" && `Quiz ${item.questionNo} / 5 · `}
+                {activeBanks} active banks
+              </span>
             </div>
           </div>
         )}
@@ -90,96 +98,103 @@ export function ScreenApp({ code }: { code: string }) {
           </div>
         )}
 
-        {data.phase === "intro" && (
-          <section className="card">
-            <div className="spread">
-              <h2>How it works</h2>
-              <span className="big">
-                <SimpleCountdown now={now} endsAt={data.phaseEndsAt} />
-              </span>
-            </div>
-            <Rules e={data.economy} />
-          </section>
-        )}
-
-        {data.phase === "ready" && item && (
-          <section className="splash">
-            <span className="eyebrow">{item.mode === "fraud" ? "Fraud & security alert" : "Loan file"}</span>
-            <h1>Case {item.decisionNo}</h1>
-            <div className="count">{data.phaseEndsAt ? Math.max(1, Math.ceil((data.phaseEndsAt - now) / 1000)) : ""}</div>
-          </section>
-        )}
-
-        {data.phase === "open" && item && (
-          <>
-            {data.deadlineAt !== null && <TimerBar now={now} deadlineAt={data.deadlineAt} totalMs={20000 * data.scale} tiers />}
-            <p className="eyebrow">
-              {data.submitted} of {data.activeCount} answered
-            </p>
-            <CaseFile item={item} showSignals={false} />
-          </>
-        )}
-
-        {data.phase === "reveal" && item && (
-          <div className="grid2" style={{ alignItems: "start" }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              {item.revealed && (
-                <section className={`verdict ${item.revealed.correct === "a" ? "good" : "bad"}`}>
-                  <span className="eyebrow">{item.revealed.category}</span>
-                  <strong style={{ fontSize: 40 }}>
-                    Right call: {choiceLabels(item.mode)[item.revealed.correct]} · {item.revealed.title}
-                  </strong>
-                  <p>{item.revealed.story}</p>
-                  <p>{item.revealed.explanation}</p>
-                </section>
-              )}
-              {data.stats && (
-                <section className="card">
-                  <span className="eyebrow">How the room decided</span>
-                  <Distribution stats={data.stats} item={item} />
-                </section>
-              )}
-            </div>
-            <CaseFile item={item} showSignals />
-          </div>
-        )}
-
-        {(data.phase === "question" || data.phase === "qreveal") && item?.question && (
-          <div className={data.phase === "qreveal" ? "grid2" : undefined} style={{ alignItems: "start" }}>
-            <section className="card">
-              <div className="spread">
-                <span className="eyebrow">
-                  Bonus question {item.questionNo} · {item.question.topic} · {item.reward === "money" ? `+${cr(data.economy.finalQuestionBonus)}` : "power-up"}
-                </span>
-                {data.phase === "question" && (
+        <div className={sideBoard ? "grid2" : undefined} style={{ alignItems: "start", display: sideBoard ? "grid" : "contents" }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+            {data.phase === "intro" && (
+              <section className="card">
+                <div className="spread">
+                  <h2>How it works</h2>
                   <span className="big">
                     <SimpleCountdown now={now} endsAt={data.phaseEndsAt} />
                   </span>
-                )}
-              </div>
-              <h2>{item.question.prompt}</h2>
-              {data.phase === "question" ? (
-                <>
-                  <QuestionOptions item={item} chosen={null} />
-                  <p className="eyebrow">
-                    {data.submitted} of {data.activeCount} answered
-                  </p>
-                </>
-              ) : (
-                data.stats && <Distribution stats={data.stats} item={item} />
-              )}
-              {data.phase === "qreveal" && item.answer && <p className="muted">{item.answer.explanation}</p>}
-            </section>
-            {data.phase === "qreveal" && data.leaderboard && (
-              <section className="card">
-                <span className="eyebrow">Leaderboard</span>
-                <Leaderboard entries={data.leaderboard} total={data.playerCount} />
+                </div>
+                <Rules e={data.economy} />
               </section>
             )}
-          </div>
-        )}
 
-        {data.phase === "final" && <Final data={data} />}
+            {data.phase === "ready" && item && (
+              <section className="splash">
+                <span className="eyebrow">{item.mode === "fraud" ? "Fraud & security alert" : "Loan file"}</span>
+                <h1>Case {item.decisionNo}</h1>
+                <div className="count">{data.phaseEndsAt ? Math.max(1, Math.ceil((data.phaseEndsAt - now) / 1000)) : ""}</div>
+              </section>
+            )}
+
+            {data.phase === "open" && item && (
+              <>
+                {data.deadlineAt !== null && <TimerBar now={now} deadlineAt={data.deadlineAt} totalMs={20000 * data.scale} tiers />}
+                <p className="eyebrow">
+                  {data.submitted} of {data.activeCount} answered
+                </p>
+                <CaseFile item={item} showSignals={false} stake={item.mode === "loan" ? data.economy.loanStake : undefined} />
+              </>
+            )}
+
+            {data.phase === "reveal" && item && (
+              <div className={sideBoard ? undefined : "grid2"} style={{ alignItems: "start", display: sideBoard ? "flex" : undefined, flexDirection: "column", gap: 16 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                  {item.revealed && (
+                    <section className={`verdict ${item.revealed.correct === "a" ? "good" : "bad"}`}>
+                      <span className="eyebrow">{item.revealed.category}</span>
+                      <strong style={{ fontSize: 40 }}>
+                        Right call: {choiceLabels(item.mode)[item.revealed.correct]} · {item.revealed.title}
+                      </strong>
+                      <p>{item.revealed.story}</p>
+                      <p>{item.revealed.explanation}</p>
+                    </section>
+                  )}
+                  {data.stats && (
+                    <section className="card">
+                      <span className="eyebrow">How the room decided</span>
+                      <Distribution stats={data.stats} item={item} />
+                    </section>
+                  )}
+                </div>
+                {!sideBoard && <CaseFile item={item} showSignals stake={item.mode === "loan" ? data.economy.loanStake : undefined} />}
+              </div>
+            )}
+
+            {(data.phase === "question" || data.phase === "qreveal") && item && (
+              <div className={data.phase === "qreveal" && !sideBoard ? "grid2" : undefined} style={{ alignItems: "start" }}>
+                <section className="card">
+                  <div className="spread">
+                    <span className="eyebrow">
+                      Quiz {item.questionNo} · {item.reward === "money" ? `correct answer pays +${money(data.economy.finalQuestionBonus)}` : "correct answer earns a power-up"}
+                    </span>
+                    {data.phase === "question" && (
+                      <span className="big">
+                        <SimpleCountdown now={now} endsAt={data.phaseEndsAt} />
+                      </span>
+                    )}
+                  </div>
+                  <h2>{data.phase === "question" ? "Everyone has their own question. Answer on your phone." : "How the room did"}</h2>
+                  {data.phase === "question" ? (
+                    <p className="eyebrow">
+                      {data.submitted} of {data.activeCount} answered
+                    </p>
+                  ) : (
+                    data.stats && <Distribution stats={data.stats} item={item} />
+                  )}
+                </section>
+                {data.phase === "qreveal" && data.leaderboard && !sideBoard && (
+                  <section className="card">
+                    <span className="eyebrow">Leaderboard</span>
+                    <Leaderboard entries={data.leaderboard} eliminated={data.eliminatedBoard} total={activeBanks} />
+                  </section>
+                )}
+              </div>
+            )}
+
+            {data.phase === "final" && <Final data={data} code={code} />}
+          </div>
+
+          {sideBoard && (
+            <section className="card">
+              <span className="eyebrow">Leaderboard</span>
+              <Leaderboard entries={data.leaderboard!} eliminated={data.eliminatedBoard} total={activeBanks} />
+            </section>
+          )}
+        </div>
 
         {data.status === "paused" && (
           <div className="overlay">
@@ -189,36 +204,58 @@ export function ScreenApp({ code }: { code: string }) {
           </div>
         )}
       </div>
+      <Announcements data={data} now={now} />
     </main>
   );
 }
 
-function Final({ data }: { data: ScreenView }) {
-  const top = data.leaderboard ?? [];
-  const [first, second, third] = top;
-  const slot = (e: (typeof top)[number] | undefined, cls: string, place: string) =>
-    e ? (
-      <div className={cls}>
-        <span className="place">{place}</span>
-        <h2>{e.name}</h2>
-        <span className="mono">{cr(e.balance)}</span>
-        <span className="muted small">{e.correct} correct</span>
+/**
+ * Brief banner (not full screen) for eliminations and the safety-floor notice. Never shown while a
+ * case or quiz is open; each shows once for a few seconds, and a reload does not replay it.
+ */
+function Announcements({ data, now }: { data: ScreenView; now: number }) {
+  if (data.phase === "ready" || data.phase === "open" || data.phase === "question") return null;
+  const dismissed = data.settings.announceDismissedAt ?? 0;
+  const visible = data.announcements.filter((a: Announcement) => a.showFrom !== null && a.showFrom > dismissed && now - a.showFrom < ANNOUNCE_MS);
+  if (visible.length === 0) return null;
+  const floor = visible.find((a) => a.kind === "floor");
+  const elims = visible.filter((a) => a.kind === "elimination");
+  return (
+    <div className={`announce ${floor && elims.length === 0 ? "floor" : ""}`} role="status">
+      <span style={{ fontSize: 40 }} aria-hidden>
+        {floor && elims.length === 0 ? "🛟" : "💥"}
+      </span>
+      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+        {elims.length > 0 && <strong>{elims.length === 1 ? "Bank eliminated" : `${elims.length} banks eliminated`}</strong>}
+        {elims.map((a) => (
+          <span key={a.id}>{a.text}</span>
+        ))}
+        {floor && <span style={{ color: "var(--accent)", fontWeight: 600 }}>{floor.text}</span>}
       </div>
-    ) : (
-      <div className={cls} />
+    </div>
+  );
+}
+
+function Final({ data, code }: { data: ScreenView; code: string }) {
+  const activeBanks = data.playerCount - data.quota.used;
+  if (!data.podiumRevealed) {
+    return (
+      <section className="splash">
+        <span className="eyebrow">{data.endedEarly ? "Session ended by the host" : "All 29 interactions complete"}</span>
+        <h1>Results are final</h1>
+        <p className="muted">The podium will be revealed by the host.</p>
+      </section>
     );
+  }
   return (
     <>
-      <h1>Final results</h1>
-      <div className="podium">
-        {slot(second, "p2", "2")}
-        {slot(first, "p1", "1")}
-        {slot(third, "p3", "3")}
-      </div>
+      <Confetti onceKey={`bmg:confetti:${code}:screen`} />
+      <h1>Congratulations to the top three!</h1>
+      {data.podium && data.podium.length > 0 ? <Podium podium={data.podium} /> : <p className="muted">No bank finished the game.</p>}
       <div className="grid2" style={{ alignItems: "start" }}>
         <section className="card">
-          <span className="eyebrow">Leaderboard</span>
-          <Leaderboard entries={top} total={data.playerCount} />
+          <span className="eyebrow">Full final ranking</span>
+          <Leaderboard entries={data.leaderboard ?? []} eliminated={data.eliminatedBoard} total={activeBanks} />
         </section>
         <section className="card">
           <span className="eyebrow">Debrief</span>

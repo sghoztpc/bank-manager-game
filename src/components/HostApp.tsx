@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import type { HostView } from "@/lib/view-types";
-import { api, cr, creds, useFrame, usePoll } from "./client";
-import { CaseFile, choiceLabels, Distribution, Leaderboard, QuestionOptions, SimpleCountdown } from "./ui";
+import { api, ApiError, creds, groupDigits, money, signedMoney, useFrame, usePoll } from "./client";
+import { CaseFile, choiceLabels, Distribution, Leaderboard, Podium, QuotaChip, SimpleCountdown } from "./ui";
 
 const PHASE_LABEL: Record<string, string> = {
   lobby: "Lobby: players joining",
@@ -11,8 +11,8 @@ const PHASE_LABEL: Record<string, string> = {
   ready: "Get ready",
   open: "Decision window",
   reveal: "Reveal",
-  question: "Bonus question",
-  qreveal: "Answer + leaderboard",
+  question: "Quiz (own question each)",
+  qreveal: "Quiz answers + leaderboard",
   final: "Finished",
 };
 
@@ -44,6 +44,8 @@ export function HostApp({ code }: { code: string }) {
   return <Console code={code} token={token} />;
 }
 
+const time = (t: number) => new Date(t).toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
 function Console({ code, token }: { code: string; token: string }) {
   const [showAnswer, setShowAnswer] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -53,7 +55,7 @@ function Console({ code, token }: { code: string; token: string }) {
   const fetcher = useCallback(() => api<HostView>(`/api/sessions/${code}/state?role=host`, { token }), [code, token]);
   const { data, error, poll, serverNow } = usePoll<HostView>(fetcher, (d, now) => {
     if (d.phase === "lobby") return 2000;
-    if (d.phase === "final") return 10000;
+    if (d.phase === "final") return 4000;
     const toEnd = d.phaseEndsAt === null ? 1000 : Math.max(0, d.phaseEndsAt - now) + 60;
     return Math.min(1000, toEnd);
   });
@@ -61,11 +63,11 @@ function Console({ code, token }: { code: string; token: string }) {
 
   useEffect(() => setShowAnswer(false), [data?.itemIndex]);
 
-  async function act(action: string, playerId?: string) {
+  async function act(action: string, extra: Record<string, unknown> = {}) {
     setBusy(true);
     setActionErr("");
     try {
-      await api(`/api/sessions/${code}/host`, { method: "POST", token, body: JSON.stringify({ action, playerId }) });
+      await api(`/api/sessions/${code}/host`, { method: "POST", token, body: JSON.stringify({ action, ...extra }) });
     } catch (e) {
       setActionErr(e instanceof Error ? e.message : "Action failed.");
     }
@@ -89,12 +91,13 @@ function Console({ code, token }: { code: string; token: string }) {
   const item = data.item;
   const origin = typeof window !== "undefined" ? window.location.origin : "";
   const hostLink = `${origin}/host/${code}#key=${encodeURIComponent(token)}`;
+  const live = data.phase === "open" || data.phase === "question";
 
   return (
     <main className="wrap wide">
       <div className="spread">
         <div>
-          <div className="eyebrow">Host console · {data.storeKind === "memory" ? "local test store" : "shared store"}</div>
+          <div className="eyebrow">Host console · you run the session, players run their own banks · {data.storeKind === "memory" ? "local test store" : "shared store"}</div>
           <h1 style={{ fontSize: 34 }}>
             Room <span className="mono" style={{ color: "var(--accent)" }}>{code}</span>
           </h1>
@@ -111,7 +114,7 @@ function Console({ code, token }: { code: string; token: string }) {
                 setCopied(true);
                 setTimeout(() => setCopied(false), 2000);
               } catch {
-                window.prompt("Host link (keep it private):", hostLink);
+                window.prompt("Host link (keep it private: it gives full control):", hostLink);
               }
             }}
           >
@@ -130,13 +133,11 @@ function Console({ code, token }: { code: string; token: string }) {
         </div>
         <div className="stat">
           <span className="eyebrow">Interaction</span>
-          <b>
-            {data.phase === "lobby" || data.phase === "intro" ? "–" : `${data.itemIndex + 1} / ${data.totalItems}`}
-          </b>
+          <b>{data.phase === "lobby" || data.phase === "intro" ? "–" : `${data.itemIndex + 1} / ${data.totalItems}`}</b>
         </div>
         <div className="stat">
           <span className="eyebrow">Time</span>
-          <b>{data.status === "paused" ? `${Math.ceil((data.pausedRemainingMs ?? 0) / 1000)}s left` : <SimpleCountdown now={now} endsAt={data.phaseEndsAt} />}</b>
+          <b>{data.status === "paused" ? `${Math.ceil((data.pausedRemainingMs ?? 0) / 1000)}s saved` : <SimpleCountdown now={now} endsAt={data.phaseEndsAt} />}</b>
         </div>
         <div className="stat">
           <span className="eyebrow">Players (connected)</span>
@@ -146,7 +147,14 @@ function Console({ code, token }: { code: string; token: string }) {
         </div>
         <div className="stat">
           <span className="eyebrow">Answered</span>
-          <b>{data.phase === "open" || data.phase === "question" ? `${data.submitted} / ${data.activeCount}` : "–"}</b>
+          <b>{live ? `${data.submitted} / ${data.activeCount}` : "–"}</b>
+        </div>
+        <div className="stat">
+          <span className="eyebrow">Eliminations</span>
+          <b>
+            {data.quota.used} / {data.quota.total}
+            {data.quota.floorActive && <span className="tag accent" style={{ marginLeft: 6, fontSize: 11 }}>1 VND floor</span>}
+          </b>
         </div>
       </section>
 
@@ -162,38 +170,83 @@ function Console({ code, token }: { code: string; token: string }) {
           </button>
         )}
         {data.status === "paused" && (
-          <button className="go" disabled={busy} onClick={() => act("resume")}>
-            Resume
+          <button className="go" disabled={busy} onClick={() => act("continue")}>
+            Continue
           </button>
         )}
         {data.status === "running" && data.phase !== "lobby" && (
           <button
             disabled={busy}
             onClick={() => {
-              if (data.phase === "open" || data.phase === "question") {
-                if (!window.confirm("Close this case now? Players who have not answered get the timeout outcome.")) return;
-              }
+              if (live && !window.confirm("Close this now? Players who have not answered get the timeout outcome.")) return;
               act("skip");
             }}
           >
-            {data.phase === "open" || data.phase === "question" ? "Close now" : "Next"}
+            {live ? "Close now" : "Next"}
+          </button>
+        )}
+        {data.phase === "final" && !data.podiumRevealed && (
+          <button className="go" disabled={busy} onClick={() => act("reveal-podium")}>
+            Reveal podium
+          </button>
+        )}
+        {data.phase !== "final" && (
+          <button
+            className="danger"
+            disabled={busy}
+            onClick={() =>
+              window.confirm(
+                "End the session now? Any open case or quiz is settled with the answers already in, then results become final. This cannot be undone.",
+              ) && act("end")
+            }
+          >
+            End session
           </button>
         )}
         {actionErr && <span className="err">{actionErr}</span>}
         {error && <span className="err">{error.message}</span>}
       </section>
 
+      <section className="row small">
+        <label style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <input type="checkbox" checked={data.settings.boardOnScreen} onChange={(e) => act("board", { value: e.target.checked })} style={{ width: "auto" }} />
+          Keep the leaderboard on the projector
+        </label>
+        <label style={{ flexDirection: "row", alignItems: "center", gap: 6 }}>
+          <input
+            type="checkbox"
+            checked={data.settings.announceEliminations}
+            onChange={(e) => act("announcements", { value: e.target.checked })}
+            style={{ width: "auto" }}
+          />
+          Show elimination announcements on the projector
+        </label>
+        <button className="small ghost" onClick={() => act("dismiss")}>
+          Dismiss current announcement
+        </button>
+      </section>
+
       <div className="grid2" style={{ alignItems: "start" }}>
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {item && (
+          {data.phase === "final" && data.podium && (
+            <section className="card">
+              <span className="eyebrow">Podium {data.podiumRevealed ? "(revealed)" : "(only you can see this until you reveal it)"}</span>
+              <Podium podium={data.podium} />
+            </section>
+          )}
+          {item && data.phase !== "final" && (
             <section className="card">
               <div className="spread">
                 <span className="eyebrow">
-                  {item.type === "decision" ? `Case ${item.decisionNo} · ${item.mode === "fraud" ? "fraud desk" : "loan"}` : `Bonus question ${item.questionNo} · ${item.reward === "money" ? "money" : "power-up"}`}
+                  {item.type === "decision"
+                    ? `Case ${item.decisionNo} · ${item.mode === "fraud" ? "fraud desk" : "loan"}`
+                    : `Quiz ${item.questionNo} · ${item.reward === "money" ? "money only" : "power-up"} · each player has their own random question`}
                 </span>
-                <button className="small ghost" onClick={() => setShowAnswer((s) => !s)}>
-                  {showAnswer ? "Hide answer" : "Show answer"}
-                </button>
+                {item.type === "decision" && (
+                  <button className="small ghost" onClick={() => setShowAnswer((s) => !s)}>
+                    {showAnswer ? "Hide answer" : "Show answer"}
+                  </button>
+                )}
               </div>
               {showAnswer && item.revealed && (
                 <div className="verdict good">
@@ -203,31 +256,25 @@ function Console({ code, token }: { code: string; token: string }) {
                   <span>{item.revealed.explanation}</span>
                 </div>
               )}
-              {item.question && (
-                <>
-                  <h2 style={{ fontSize: 22 }}>{item.question.prompt}</h2>
-                  <QuestionOptions item={showAnswer ? item : { ...item, answer: undefined }} chosen={null} />
-                  {showAnswer && item.answer && <p className="muted small">{item.answer.explanation}</p>}
-                </>
-              )}
             </section>
           )}
-          {item?.case && <CaseFile item={item} showSignals={showAnswer} />}
+          {item?.case && data.phase !== "final" && <CaseFile item={item} showSignals={showAnswer} stake={item.mode === "loan" ? data.economy.loanStake : undefined} />}
           {data.stats && item && (
             <section className="card">
-              <span className="eyebrow">How the room decided</span>
+              <span className="eyebrow">How the room did</span>
               <Distribution stats={data.stats} item={item} />
             </section>
           )}
+          <AdjustPanel code={code} token={token} data={data} onDone={poll} />
+          <EliminationLog data={data} />
+          <AdjustmentLog data={data} />
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-          {data.leaderboard && data.leaderboard.length > 0 && (
-            <section className="card">
-              <span className="eyebrow">Leaderboard</span>
-              <Leaderboard entries={data.leaderboard} total={data.playerCount} />
-            </section>
-          )}
+          <section className="card">
+            <span className="eyebrow">Leaderboard</span>
+            <Leaderboard entries={data.leaderboard ?? []} eliminated={data.eliminatedBoard} total={data.playerCount - data.quota.used} />
+          </section>
           <section className="card">
             <span className="eyebrow">Players</span>
             {data.players.length === 0 && <p className="muted">Nobody has joined yet.</p>}
@@ -236,21 +283,22 @@ function Console({ code, token }: { code: string; token: string }) {
                 <tbody>
                   {data.players.map((p) => (
                     <tr key={p.id}>
-                      <td className="mono">{p.rank ?? ""}</td>
+                      <td className="mono">{p.status === "eliminated" ? `✕${p.eliminationOrder}` : (p.rank ?? "")}</td>
                       <td>
                         <span title={p.active ? "connected" : "not seen in the last 10 s"} style={{ color: p.active ? "var(--good)" : "var(--muted)" }}>
                           ●
                         </span>{" "}
                         {p.name}
                         {p.late && <span className="tag" style={{ marginLeft: 6 }}>late</span>}
+                        {p.status === "eliminated" && <span className="tag bad" style={{ marginLeft: 6 }}>out</span>}
                       </td>
-                      <td className="n">{cr(p.balance)}</td>
+                      <td className="n">{money(p.balance)}</td>
                       <td className="n">{p.correct}</td>
                       <td className="n">{p.powerUps > 0 ? `${p.powerUps} PU` : ""}</td>
                       <td className="n">
                         <button
                           className="small danger"
-                          onClick={() => window.confirm(`Remove ${p.name} from the game?`) && act("kick", p.id)}
+                          onClick={() => window.confirm(`Remove ${p.name} from the game?`) && act("kick", { playerId: p.id })}
                           aria-label={`Remove ${p.name}`}
                         >
                           ✕
@@ -265,5 +313,221 @@ function Console({ code, token }: { code: string; token: string }) {
         </div>
       </div>
     </main>
+  );
+}
+
+type Preview = {
+  name: string;
+  before: number;
+  change: number;
+  after: number;
+  outcome: "applied" | "eliminated" | "floored" | "refused";
+  order: number | null;
+  refusal: string | null;
+};
+
+const newKey = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+/**
+ * Add or subtract VND for one player: preview the consequence, then apply once. The form's key
+ * stays the same until the adjustment succeeds, so a double click or a retry cannot apply it twice.
+ */
+function AdjustPanel({ code, token, data, onDone }: { code: string; token: string; data: HostView; onDone: () => void }) {
+  const [playerId, setPlayerId] = useState("");
+  const [op, setOp] = useState<"add" | "subtract">("subtract");
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const [key, setKey] = useState(newKey);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const digits = amount.replace(/\D/g, "");
+  const body = { id: key, playerId, op, amount: Number(digits), reason };
+  // Any change to the form invalidates the preview and gives the next submission a new key.
+  useEffect(() => {
+    setPreview(null);
+    setKey(newKey());
+  }, [playerId, op, digits, reason]);
+
+  async function doPreview() {
+    setMsg("");
+    try {
+      setPreview(await api<Preview>(`/api/sessions/${code}/adjust`, { method: "POST", token, body: JSON.stringify({ ...body, preview: true }) }));
+    } catch (e) {
+      setMsg(e instanceof ApiError ? e.message : "Preview failed.");
+    }
+  }
+
+  async function apply() {
+    setBusy(true);
+    setMsg("");
+    try {
+      const r = await api<{ record: { name: string; after: number; outcome: string }; duplicate: boolean }>(`/api/sessions/${code}/adjust`, {
+        method: "POST",
+        token,
+        body: JSON.stringify(body),
+      });
+      setMsg(
+        r.duplicate
+          ? "Already applied (this adjustment was only applied once)."
+          : `Applied: ${r.record.name} now has ${money(r.record.after)}${r.record.outcome === "eliminated" ? " and is eliminated" : r.record.outcome === "floored" ? " (safety floor)" : ""}.`,
+      );
+      setAmount("");
+      setReason("");
+      onDone();
+    } catch (e) {
+      setMsg(e instanceof ApiError ? e.message : "Could not apply. Check the connection; retrying will not apply it twice.");
+    }
+    setBusy(false);
+  }
+
+  const candidates = data.players.slice().sort((a, b) => a.name.localeCompare(b.name));
+  return (
+    <section className="card">
+      <span className="eyebrow">Adjust a balance</span>
+      <div className="grid2">
+        <label>
+          Player
+          <select value={playerId} onChange={(e) => setPlayerId(e.target.value)} className="select">
+            <option value="">Choose…</option>
+            {candidates.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.name} · {money(p.balance)}
+                {p.status === "eliminated" ? " (eliminated)" : ""}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Operation
+          <select value={op} onChange={(e) => setOp(e.target.value as "add" | "subtract")} className="select">
+            <option value="subtract">Subtract</option>
+            <option value="add">Add</option>
+          </select>
+        </label>
+        <label>
+          Amount (whole VND)
+          <input inputMode="numeric" value={digits ? groupDigits(Number(digits)) : ""} onChange={(e) => setAmount(e.target.value)} placeholder="50.000.000" />
+        </label>
+        <label>
+          Reason (recorded)
+          <input value={reason} onChange={(e) => setReason(e.target.value)} maxLength={120} placeholder="e.g. Presentation bonus" />
+        </label>
+      </div>
+      <div className="row">
+        <button className="small" disabled={!playerId || !digits || !reason.trim()} onClick={doPreview}>
+          Preview
+        </button>
+        {preview && preview.outcome !== "refused" && (
+          <button
+            className={`small ${preview.outcome === "eliminated" ? "danger" : "go"}`}
+            disabled={busy}
+            onClick={() => (preview.outcome !== "eliminated" || window.confirm(`This eliminates ${preview.name}. Apply?`)) && apply()}
+          >
+            Apply {signedMoney(preview.change)}
+          </button>
+        )}
+      </div>
+      {preview && (
+        <div className={`verdict ${preview.outcome === "eliminated" ? "bad" : preview.outcome === "refused" ? "meh" : "good"}`}>
+          <strong>
+            {preview.name}: {money(preview.before)} → {money(preview.after)}
+          </strong>
+          <span>
+            {preview.outcome === "refused" && preview.refusal}
+            {preview.outcome === "eliminated" && `This deduction takes the balance to zero: ${preview.name} becomes elimination ${preview.order} of ${data.quota.total}.`}
+            {preview.outcome === "floored" && `The elimination quota is used up, so the balance stops at the ${data.economy.safetyFloor} VND safety floor.`}
+            {preview.outcome === "applied" && "No elimination. Rankings update when you apply."}
+          </span>
+        </div>
+      )}
+      {msg && <p className="small">{msg}</p>}
+    </section>
+  );
+}
+
+function EliminationLog({ data }: { data: HostView }) {
+  return (
+    <section className="card">
+      <div className="spread">
+        <span className="eyebrow">Elimination log</span>
+        <QuotaChip quota={data.quota} />
+      </div>
+      {data.eliminations.length === 0 ? (
+        <p className="muted small">No eliminations yet.</p>
+      ) : (
+        <div className="scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Bank</th>
+                <th>Triggered by</th>
+                <th className="n">Change</th>
+                <th className="n">At</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.eliminations.map((e) => (
+                <tr key={e.order}>
+                  <td className="mono">{e.order}</td>
+                  <td>{e.name}</td>
+                  <td className="small">{e.cause}</td>
+                  <td className="n neg">
+                    {signedMoney(e.change)} <span className="muted">from {money(e.before)}</span>
+                  </td>
+                  <td className="n">{time(e.at)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {data.quota.floorActive && <p className="small" style={{ color: "var(--accent)" }}>Quota reached: remaining banks have a 1 VND safety floor.</p>}
+    </section>
+  );
+}
+
+function AdjustmentLog({ data }: { data: HostView }) {
+  if (data.adjustments.length === 0) return null;
+  return (
+    <section className="card">
+      <span className="eyebrow">Adjustment log</span>
+      <div className="scroll">
+        <table>
+          <thead>
+            <tr>
+              <th>At</th>
+              <th>Player</th>
+              <th className="n">Change</th>
+              <th>Reason</th>
+              <th className="n">Before → after</th>
+              <th>By</th>
+            </tr>
+          </thead>
+          <tbody>
+            {data.adjustments
+              .slice()
+              .reverse()
+              .map((a) => (
+                <tr key={a.id}>
+                  <td className="mono">{time(a.at)}</td>
+                  <td>
+                    {a.name}
+                    {a.outcome !== "applied" && <span className="tag bad" style={{ marginLeft: 6 }}>{a.outcome}</span>}
+                  </td>
+                  <td className={`n ${a.op === "add" ? "pos" : "neg"}`}>{signedMoney(a.op === "add" ? a.amount : -a.amount)}</td>
+                  <td className="small">{a.reason}</td>
+                  <td className="n small">
+                    {money(a.before)} → {money(a.after)}
+                  </td>
+                  <td className="small muted">{a.actor}</td>
+                </tr>
+              ))}
+          </tbody>
+        </table>
+      </div>
+    </section>
   );
 }

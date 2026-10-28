@@ -1,6 +1,6 @@
 // Shapes sent to browsers. Kept free of server imports so client components can use them.
 
-import type { FraudCategory, HistoryEntry, LeaderEntry, Phase, PowerUpToken, RevealStats, Signal } from "./types";
+import type { AdjustmentRecord, Announcement, EliminationRecord, FraudCategory, HistoryEntry, LeaderEntry, Phase, PowerUpToken, RevealStats, SessionMeta, Signal } from "./types";
 
 export interface PublicRow {
   label: string;
@@ -37,6 +37,12 @@ export interface RevealedCase {
   approvePct: number | null;
 }
 
+export interface QuizOptionView {
+  /** Stable option id (its index in the source); this is what the phone submits. */
+  id: number;
+  text: string;
+}
+
 export interface ItemView {
   index: number;
   type: "decision" | "question";
@@ -46,8 +52,10 @@ export interface ItemView {
   reward?: "powerup" | "money";
   case?: PublicCase;
   revealed?: RevealedCase;
-  question?: { topic: string; prompt: string; options: string[] };
-  answer?: { answerIndex: number; explanation: string };
+  /** Player views only: this player's own question, options in their personal order. */
+  question?: { id: string; topic: string; prompt: string; options: QuizOptionView[] };
+  /** Player views only, once the quiz closes. */
+  answer?: { id: number; text: string };
 }
 
 export interface EconomyView {
@@ -62,7 +70,18 @@ export interface EconomyView {
   finalQuestionBonus: number;
   speedTiers: { upToMs: number; bonus: number }[];
   decisionSeconds: number;
+  quizSeconds: number;
+  eliminationQuota: number;
+  safetyFloor: number;
 }
+
+export interface QuotaView {
+  used: number;
+  total: number;
+  floorActive: boolean;
+}
+
+export type EliminationView = Pick<EliminationRecord, "order" | "name" | "cause" | "change" | "before" | "at">;
 
 export interface SessionView {
   code: string;
@@ -81,8 +100,17 @@ export interface SessionView {
   scale: number;
   item: ItemView | null;
   stats: RevealStats | null;
+  /** Active players, top of the table. Null when the viewer may not see it yet. */
   leaderboard: LeaderEntry[] | null;
+  /** Eliminated players, in elimination order. */
+  eliminatedBoard: LeaderEntry[] | null;
+  /** Final podium (everyone ranked 1-3, ties included); only once the host reveals it. */
+  podium: LeaderEntry[] | null;
+  podiumRevealed: boolean;
+  endedEarly: boolean;
   playerCount: number;
+  quota: QuotaView;
+  eliminations: EliminationView[];
   economy: EconomyView;
 }
 
@@ -91,15 +119,21 @@ export interface MeView {
   name: string;
   balance: number;
   correct: number;
+  /** Hidden in the final phase until the podium is revealed. */
   rank: number | null;
+  rankChange: number;
   late: boolean;
+  status: "active" | "eliminated";
+  elimination: EliminationView | null;
   inventory: PowerUpToken[];
   /** The player's answer to the current open item, if any. */
   submitted: "a" | "d" | number | null;
   /** Outcome for the current item once revealed. */
   result: (HistoryEntry & { label: string; roi: number | null }) | null;
+  /** Recent host adjustments to this player, newest last. */
+  adjustments: HistoryEntry[];
   /** Full history, sent only at the end. */
-  history: (HistoryEntry & { title: string; kind: string })[] | null;
+  history: (HistoryEntry & { title: string })[] | null;
 }
 
 export interface PlayerView extends SessionView {
@@ -115,6 +149,8 @@ export interface HostPlayerRow {
   late: boolean;
   active: boolean;
   powerUps: number;
+  status: "active" | "eliminated";
+  eliminationOrder: number | null;
 }
 
 export interface HostView extends SessionView {
@@ -122,6 +158,8 @@ export interface HostView extends SessionView {
   submitted: number;
   players: HostPlayerRow[];
   storeKind: string;
+  adjustments: AdjustmentRecord[];
+  settings: SessionMeta["settings"];
 }
 
 export interface ScreenView extends SessionView {
@@ -129,4 +167,6 @@ export interface ScreenView extends SessionView {
   submitted: number;
   /** Lobby only: names as they join. */
   names: string[] | null;
+  announcements: Announcement[];
+  settings: SessionMeta["settings"];
 }

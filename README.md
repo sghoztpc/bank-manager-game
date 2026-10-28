@@ -1,18 +1,22 @@
 # Bank Manager
 
 A browser-based classroom game in the spirit of *Papers, Please*. Students act as bank managers on
-their phones: they assess 18 loan files, screen 6 fraud and security alerts, answer 5 bonus
-questions, and compete to finish with the most (fictional) money. Built for 40 to 47 players at
-once, up to 100.
+their phones: they assess 18 loan files, screen 6 fraud and security alerts, answer 5 quiz
+questions of their own, and compete to finish with the biggest (fictional) VND balance. The first
+five banks to go bankrupt are eliminated; after that, every surviving bank has a 1 VND safety floor.
+Built for 40 to 47 players at once, up to 100.
 
-- **Player** (`/play/CODE`): case documents, decisions, timer, balance, outcomes, power-up tokens.
-- **Host** (`/host/CODE`): start, pause, resume, close or skip, remove players, see answers,
-  export CSV.
-- **Projector** (`/screen/CODE`): QR code and room code, progress, reveals, leaderboard, podium,
-  debrief.
+- **Player** (`/play/CODE`): their own bank. VND balance, case documents, decisions, timer, quiz,
+  rank, power-up tokens, pause status, and a Game Over screen if eliminated.
+- **Host** (`/host/CODE`): the session. Start, pause, continue, close or next, end session,
+  balance adjustments (preview, then apply once), elimination and adjustment logs, projector
+  toggles, podium reveal, removing players, CSV export.
+- **Projector** (`/screen/CODE`): QR code and room code, progress, reveals, elimination banners,
+  leaderboard, podium, debrief.
 
-Every design decision (money model, fraud and final-question weights, speed bonus, timeouts,
-ranking, architecture, free tiers, time budget) is in [docs/DESIGN.md](docs/DESIGN.md).
+Every design decision is in [docs/DESIGN.md](docs/DESIGN.md): Part A for Brief 1 (money model,
+weights, speed bonus, timeouts, architecture, free tiers) and Part B for Brief 2 (elimination,
+VND, roles, podium, randomised quiz).
 
 ## Run it locally
 
@@ -54,9 +58,9 @@ happens.
 
 ## Before using it with a class
 
-- Replace or check the bonus questions in `src/lib/content/questions.ts` against your
-  presentation.
-- Run one full rehearsal at real speed (see the time budget in DESIGN.md §13).
+- Review the quiz pool in `src/lib/content/questions.ts` against your presentation. Q02, Q09 and Q14
+  are held out of play with proposed corrections (DESIGN.md B6); once fixed, set `playable: true`.
+- Run one full rehearsal at real speed (see the time budget in DESIGN.md B7).
 - Optionally edit or add cases in `src/lib/content/`. `npm test` checks the pool still supports
   the session draw.
 
@@ -84,22 +88,44 @@ GAME_TIME_SCALE=0.25 KV_REST_API_URL=http://localhost:8079 KV_REST_API_TOKEN=loc
 npm run loadtest -- --url http://localhost:3000 --players 100
 ```
 
-The load test checks that the 101st player is refused, double taps are rejected, every balance
-equals the start plus its history, speed bonuses never appear on wrong or slow answers, the final
-question pays money only, power-ups match correct answers to questions 1 to 4, and the ranking is
-in order.
+The load test plays bots that lend recklessly, so banks go bankrupt. Meanwhile the host makes
+adjustments (each sent twice) and pauses and continues once. The test checks:
+
+- the 101st player is refused, and double taps are rejected;
+- every balance equals the start plus its applied changes, in whole VND;
+- at most five eliminations, numbered 1 to n; eliminated banks sit at 0 VND and can't act;
+  survivors never go below 1 VND, and the floor applies only after the fifth elimination;
+- quiz questions never change for a player and never repeat;
+- speed bonuses never appear on wrong or slow answers; the final quiz pays money only;
+  power-ups match correct answers to quizzes 1 to 4;
+- ranks are in order and ties are shared;
+- the podium stays hidden until revealed, then shows only active banks;
+- the full final ranking is shown.
 
 ## Verification status
 
-| Target (brief §11) | How it was checked | Result |
+### Brief 2 acceptance checks (§6)
+
+| Check | How | Result |
 | --- | --- | --- |
-| QR and room-code joining on phones | Playwright, iPhone 13 viewport, three phones | Passed (a real-device check is still needed) |
-| 47 players, 100-player capacity | Load test, Redis store, scaled clock | 47 and 100 passed: 0 errors, 101st refused |
-| Server-controlled scoring and deadlines | Service tests at the exact boundary (20 s + 400 ms) | Passed |
-| Duplicate-submission protection | Tests + about 700 double taps in load tests | Passed |
-| Identity after refresh or disconnection | Tests, Playwright reload, load-test dropouts | Passed |
-| Consistent state, balances, rankings | Load-test integrity checks | Passed |
-| Sequencing and collisions after 20 and 24 | Service test that walks all 29 items | Passed |
-| No speed bonus from 15 to 20 s | Unit and service tests | Passed |
-| Final question money only | Unit, service and load tests | Passed |
-| Full rehearsal within the intended time | Real-time simulated run with 47 players on Redis | 10.5 min of game, 0 errors, 35.7k Redis commands. Worst case 13.4 min plus joining and debrief. A class rehearsal is still needed (DESIGN.md §13) |
+| QR/room-code joining; distinct host/player permissions | Playwright (3 phones + host + projector); service tests reject player tokens on every host action | Passed |
+| Positive, exact-zero and overshooting outcomes | Unit + service tests | Passed |
+| Five different players eliminated once each; simultaneous 5th/6th failures; no sixth | Service tests (four banks failing on one case; two concurrent host deductions racing for the last slot) on memory and Redis; load tests | Passed |
+| Survivor losing repeatedly under the 1 VND floor | Unit + service tests; 15–26 floored outcomes per load test | Passed |
+| Game Over, host log, announcement, quota after refresh | Service tests; Playwright reload of the eliminated phone | Passed |
+| Host additions and deductions, including one that eliminates, and a repeated submission | Service tests; load test sends each adjustment twice | Passed |
+| Pause and continue during decisions and quizzes | Service tests (saved time restored, 3 s minimum, answers refused while paused); load test; Playwright | Passed |
+| Five random questions per player, persistent order, grading after shuffle | Unit tests (300 players), service tests, load-test consistency check | Passed |
+| Triggers after 5/10/15/20/24; no duplicate rewards; no power-up from quiz 5 | Service test walking all 29 items; load tests | Passed |
+| VND and ranking consistent after every money change | Load-test invariants; unit tests for whole VND | Passed |
+| Ties, fewer than three finishers, finalisation, podium, persistent final ranking | Service tests; Playwright podium (2 finishers, empty third place) | Passed |
+| 47-player run and 100-player capacity with simultaneous outcomes | Load tests on Redis (4× speed) | 47 and 100 passed, 0 errors, 101st refused |
+| Full rehearsal near 15 minutes | Real-time 47-player simulated run on Redis | Pending: result to be recorded here; a class rehearsal is still needed (DESIGN.md B7) |
+
+The quiz transcription was checked mechanically against the brief's appendix: 30 of 30
+questions match, with 0 mismatches.
+
+### Brief 1 checks (still covered)
+
+Server-controlled deadlines (exact 20 s + 400 ms boundary), duplicate protection, reconnection,
+sequencing and the 15–20 s no-bonus window remain covered by the test suites and load tests above.

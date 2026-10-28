@@ -1,4 +1,4 @@
-import { NETWORK, type Timing } from "../config";
+import { MIN_RESUME_MS, NETWORK, type Timing } from "../config";
 import type { SessionMeta } from "../types";
 
 // Pure session clock. The service calls `nextPhase` when a phase's time is up, when every
@@ -55,15 +55,23 @@ export function pause(meta: SessionMeta, now: number): SessionMeta {
   return { ...meta, status: "paused", pausedAt: now, pausedRemainingMs: Math.max(0, meta.phaseEndsAt - now) };
 }
 
-/** Shifts the phase end and the case opening time by the paused duration, so pauses never eat decision time. */
-export function resume(meta: SessionMeta, now: number): SessionMeta {
+/**
+ * Continue: restores the saved remaining time (not a fresh timer). A decision or quiz window that
+ * was almost over gets at least MIN_RESUME_MS back so Continue never causes an instant timeout.
+ * The case's opening time moves with the deadline, so response times exclude the pause.
+ */
+export function resume(meta: SessionMeta, now: number, t: Timing): SessionMeta {
   if (meta.status !== "paused" || meta.pausedAt === null) return meta;
-  const pausedFor = now - meta.pausedAt;
+  const live = meta.phase === "open" || meta.phase === "question";
+  const saved = meta.pausedRemainingMs ?? 0;
+  const remaining = live ? Math.max(saved, Math.round(MIN_RESUME_MS * meta.scale)) : saved;
+  const phaseEndsAt = now + remaining;
   return {
     ...meta,
     status: "running",
-    phaseEndsAt: now + (meta.pausedRemainingMs ?? 0),
-    openedAt: meta.openedAt === null ? null : meta.openedAt + pausedFor,
+    phaseEndsAt,
+    openedAt: meta.openedAt === null ? null : meta.phase === "open" ? phaseEndsAt - t.decisionMs - NETWORK.latencyGraceMs : meta.openedAt + (now - meta.pausedAt),
+    phaseStartedAt: meta.phase === "question" ? meta.phaseStartedAt + (now - meta.pausedAt) : meta.phaseStartedAt,
     pausedAt: null,
     pausedRemainingMs: null,
   };

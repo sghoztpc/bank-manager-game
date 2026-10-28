@@ -25,7 +25,7 @@ export async function GET(req: Request, ctx: { params: Promise<{ code: string }>
     }
     if (role === "screen") {
       const s = await svc.screenSnapshot(code);
-      return json(screenView(s.meta, s.playerCount, s.activeCount, s.submitted, s.names, Date.now()));
+      return json(screenView(s.meta, s.playerCount, s.activeCount, s.submitted, s.names, Date.now(), s.finalBoard));
     }
     throw new GameError(400, "Unknown role.");
   });

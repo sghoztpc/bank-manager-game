@@ -12,9 +12,9 @@ export const FRAUD_CASES: FraudCase[] = [
     category: "Cybersecurity incident",
     title: "Account takeover",
     customer: "Trần Minh Đức · 28 · office worker",
-    headline: "Outgoing transfer ₫120,000,000",
+    headline: "Outgoing transfer 120.000.000 VND",
     profile: [
-      r("Usual spending", "₫100k–3m per payment"),
+      r("Usual spending", "100.000–3.000.000 VND per payment"),
       r("Phone", "Galaxy S23, registered since 2023"),
       r("Active hours", "08:00–23:00, TP. Hồ Chí Minh"),
     ],
@@ -35,9 +35,9 @@ export const FRAUD_CASES: FraudCase[] = [
     category: "Scam / social engineering",
     title: "Fake police \"safe account\" scam",
     customer: "Nguyễn Thị Lan · 67 · retired teacher",
-    headline: "Outgoing transfer ₫250,000,000",
+    headline: "Outgoing transfer 250.000.000 VND",
     profile: [
-      r("Usual spending", "₫2–10m, mostly to her son and utilities"),
+      r("Usual spending", "2.000.000–10.000.000 VND, mostly to her son and utilities"),
       r("Phone", "iPhone 11, registered since 2022"),
       r("Active hours", "07:00–20:00, Hà Nội"),
     ],
@@ -58,9 +58,9 @@ export const FRAUD_CASES: FraudCase[] = [
     category: "Payment fraud screening",
     title: "Card testing",
     customer: "Lê Hoàng Anh · 21 · university student",
-    headline: "Online card payment ₫9,000",
+    headline: "Online card payment 9.000 VND",
     profile: [
-      r("Usual spending", "₫30k–500k, cafés and food delivery"),
+      r("Usual spending", "30.000–500.000 VND, cafés and food delivery"),
       r("Card use", "Mostly in-person in Đà Nẵng"),
     ],
     alert: [
@@ -79,9 +79,9 @@ export const FRAUD_CASES: FraudCase[] = [
     category: "Scam / social engineering",
     title: "Business email compromise",
     customer: "Bảo Hardware (company account)",
-    headline: "Supplier payment ₫850,000,000",
+    headline: "Supplier payment 850.000.000 VND",
     profile: [
-      r("Usual payments", "₫20–200m to long-time suppliers, month end"),
+      r("Usual payments", "20.000.000–200.000.000 VND to long-time suppliers, month end"),
       r("Approvals", "Owner enters, accountant approves"),
     ],
     alert: [
@@ -101,13 +101,13 @@ export const FRAUD_CASES: FraudCase[] = [
     category: "Payment fraud screening",
     title: "Money mule account",
     customer: "Phạm Văn Tâm · 20 · student",
-    headline: "Outgoing transfer ₫48,000,000",
+    headline: "Outgoing transfer 48.000.000 VND",
     profile: [
-      r("Usual balance", "Under ₫2m"),
+      r("Usual balance", "Under 2.000.000 VND"),
       r("Usual activity", "Allowance from parents, small purchases"),
     ],
     alert: [
-      r("Inflows", "₫48m from 6 strangers in the last hour", "bad"),
+      r("Inflows", "48.000.000 VND from 6 strangers in the last hour", "bad"),
       r("Recipient", "New account, never paid before", "bad"),
       r("Message", "\"Chuyen ho\" (transfer on behalf)", "bad"),
       r("Device", "His usual phone", "good"),
@@ -122,9 +122,9 @@ export const FRAUD_CASES: FraudCase[] = [
     category: "Payment fraud screening",
     title: "Large transfer to family",
     customer: "Nguyễn Thị Lan · 67 · retired teacher",
-    headline: "Outgoing transfer ₫55,000,000",
+    headline: "Outgoing transfer 55.000.000 VND",
     profile: [
-      r("Usual spending", "₫2–10m, mostly to her son and utilities"),
+      r("Usual spending", "2.000.000–10.000.000 VND, mostly to her son and utilities"),
       r("Phone", "iPhone 11, registered since 2022"),
     ],
     alert: [
@@ -144,9 +144,9 @@ export const FRAUD_CASES: FraudCase[] = [
     category: "Payment fraud screening",
     title: "Card used abroad",
     customer: "Vũ Thu Hà · 34 · marketing manager",
-    headline: "Card payment ₫4,200,000 in Tokyo",
+    headline: "Card payment 4.200.000 VND in Tokyo",
     profile: [
-      r("Usual spending", "₫500k–15m"),
+      r("Usual spending", "500.000–15.000.000 VND"),
       r("Home", "Hà Nội"),
       r("Notice on file", "Travel to Japan this week", "good"),
     ],
@@ -166,9 +166,9 @@ export const FRAUD_CASES: FraudCase[] = [
     category: "Cybersecurity incident",
     title: "Login from a new phone",
     customer: "Đỗ Quang Huy · 27 · software engineer",
-    headline: "Outgoing transfer ₫6,500,000",
+    headline: "Outgoing transfer 6.500.000 VND",
     profile: [
-      r("Usual spending", "₫1–10m"),
+      r("Usual spending", "1.000.000–10.000.000 VND"),
       r("Regular payees", "Landlord, parents"),
     ],
     alert: [
@@ -188,9 +188,9 @@ export const FRAUD_CASES: FraudCase[] = [
     category: "Payment fraud screening",
     title: "Month-end supplier payment",
     customer: "Nam Logistics (company account)",
-    headline: "Supplier payment ₫640,000,000",
+    headline: "Supplier payment 640.000.000 VND",
     profile: [
-      r("Usual payments", "₫50–400m to fuel and parts suppliers"),
+      r("Usual payments", "50.000.000–400.000.000 VND to fuel and parts suppliers"),
       r("Approvals", "Director enters, finance manager approves"),
     ],
     alert: [

@@ -148,6 +148,16 @@ export function useFrame(active: boolean) {
 
 // ---------- Formatting ----------
 
-export const cr = (n: number) => `${Math.round(n).toLocaleString("en-US")} Cr`;
-export const signedCr = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${Math.abs(Math.round(n)).toLocaleString("en-US")} Cr`;
+/** Vietnamese grouping with dots, independent of the device's locale data: 1.000.000 */
+export function groupDigits(n: number): string {
+  return Math.abs(Math.round(n))
+    .toString()
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+}
+
+/** 1.000.000 VND */
+export const money = (n: number) => `${n < 0 ? "−" : ""}${groupDigits(n)} VND`;
+/** +50.000 VND / −150.000.000 VND */
+export const signedMoney = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : "±"}${groupDigits(n)} VND`;
+/** ROI stays a percentage, separate from VND amounts. */
 export const pct = (n: number) => `${n > 0 ? "+" : n < 0 ? "−" : ""}${Math.abs(n * 100).toFixed(1).replace(/\.0$/, "")}%`;

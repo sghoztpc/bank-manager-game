@@ -1,11 +1,14 @@
 import { createHash, randomBytes, randomInt } from "node:crypto";
-import { CAPACITY, ECONOMY, NETWORK, timeScale, timing, type Timing } from "../config";
+import { ADJUSTMENT_MAX, CAPACITY, ECONOMY, ELIMINATION, NETWORK, timeScale, timing, type Timing } from "../config";
+import { applyBalanceChange, floorActive, previewBalanceChange } from "../engine/elimination";
 import { decisionClosesAt, nextPhase, pause, resume } from "../engine/phases";
-import { buildSchedule, getQuestion } from "../engine/schedule";
+import { assignQuiz } from "../engine/quiz";
+import { toLeaderEntry } from "../engine/ranking";
+import { buildSchedule } from "../engine/schedule";
 import { getStore } from "../store";
 import type { Store } from "../store/types";
-import type { PlayerRecord, SessionMeta, Submission } from "../types";
-import { resolveItem } from "./resolve";
+import type { AdjustmentRecord, Announcement, EliminationRecord, PlayerRecord, SessionMeta, Submission } from "../types";
+import { resolveItem, standings } from "./resolve";
 
 export class GameError extends Error {
   constructor(
@@ -45,6 +48,50 @@ export function cleanNickname(raw: unknown): string {
     .slice(0, 16);
 }
 
+/** Phases in which a case or quiz is on players' screens: no projector interruptions then. */
+const LIVE_PHASES = new Set(["ready", "open", "question"]);
+
+function announcementsFor(added: EliminationRecord[], countBefore: number, countAfter: number): Announcement[] {
+  const out: Announcement[] = added.map((e) => ({
+    id: `elim-${e.order}`,
+    kind: "elimination",
+    text: `${e.name} is out: elimination ${e.order} of ${ELIMINATION.quota} (${e.cause})`,
+    showFrom: null,
+  }));
+  if (countBefore < ELIMINATION.quota && countAfter >= ELIMINATION.quota) {
+    out.push({
+      id: "floor",
+      kind: "floor",
+      text: `All ${ELIMINATION.quota} eliminations are used. Every remaining bank now has a ${ELIMINATION.safetyFloor} VND safety floor.`,
+      showFrom: null,
+    });
+  }
+  return out;
+}
+
+/** Announcements wait until the projector is not showing a case or quiz. */
+function releaseAnnouncements(meta: SessionMeta, now: number): SessionMeta {
+  if (LIVE_PHASES.has(meta.phase) || meta.announcements.every((a) => a.showFrom !== null)) return meta;
+  return { ...meta, announcements: meta.announcements.map((a) => (a.showFrom === null ? { ...a, showFrom: now } : a)) };
+}
+
+/** Untrusted request body: { id, playerId, op, amount, reason }. */
+export type AdjustmentInput = Record<string, unknown>;
+
+function parseAdjustment(input: AdjustmentInput) {
+  const id = typeof input.id === "string" && /^[A-Za-z0-9_-]{8,64}$/.test(input.id) ? input.id : null;
+  if (!id) throw new GameError(400, "Missing adjustment id.");
+  if (typeof input.playerId !== "string") throw new GameError(400, "Choose a player.");
+  if (input.op !== "add" && input.op !== "subtract") throw new GameError(400, "Choose add or subtract.");
+  const amount = typeof input.amount === "number" ? input.amount : Number(input.amount);
+  if (!Number.isSafeInteger(amount) || amount < 1 || amount > ADJUSTMENT_MAX) {
+    throw new GameError(400, `Enter a whole VND amount from 1 to ${ADJUSTMENT_MAX.toLocaleString("vi-VN")}.`);
+  }
+  const reason = typeof input.reason === "string" ? input.reason.replace(/[\p{C}<>]/gu, "").trim().slice(0, 120) : "";
+  if (!reason) throw new GameError(400, "Record a reason for the adjustment.");
+  return { id, playerId: input.playerId, op: input.op as "add" | "subtract", amount, reason };
+}
+
 export class GameService {
   constructor(
     private store: Store = getStore(),
@@ -81,7 +128,14 @@ export class GameService {
         pausedAt: null,
         lastReveal: null,
         leaderboard: [],
+        eliminatedBoard: [],
         rankedCount: 0,
+        eliminations: [],
+        adjustments: [],
+        announcements: [],
+        settings: { announceEliminations: true, announceDismissedAt: null, boardOnScreen: false },
+        podiumRevealed: false,
+        endedEarly: false,
       };
       if (await this.store.createMeta(meta)) return { code, hostToken };
     }
@@ -103,22 +157,27 @@ export class GameService {
     if (!claimed) throw new GameError(409, "That nickname is taken. Try another.");
 
     const token = newToken();
+    const id = randomBytes(9).toString("base64url");
     const lateItem = meta.phase === "ready" || meta.phase === "open" || meta.phase === "question" ? meta.itemIndex : meta.itemIndex + 1;
     const joinedAtItem = meta.phase === "lobby" || meta.phase === "intro" ? -1 : lateItem;
     const player: PlayerRecord = {
-      id: randomBytes(9).toString("base64url"),
+      id,
       name,
       tokenHash: hashToken(token),
       joinedAt: this.now(),
       joinedAtItem,
       kicked: false,
+      status: "active",
+      eliminationOrder: null,
       balance: ECONOMY.startingBalance,
       correct: 0,
       correctMs: 0,
       lastResolved: joinedAtItem < 0 ? -1 : joinedAtItem - 1,
       rank: null,
+      prevRank: null,
       history: [],
       inventory: [],
+      quiz: assignQuiz(meta.seed, id),
     };
     if (!(await this.store.addPlayer(player, code, CAPACITY.maxPlayers))) {
       await this.store.releaseName(code, name.toLocaleLowerCase("vi"));
@@ -163,16 +222,15 @@ export class GameService {
     try {
       const fresh = await this.store.getMeta(seen.code);
       if (!fresh || fresh.seq !== seen.seq || !shouldAdvance(fresh)) return fresh ?? seen;
-      if (mutate) {
-        const changed = { ...(await mutate(fresh)), seq: fresh.seq + 1 };
-        await this.store.putMeta(changed);
-        return changed;
-      }
       const now = this.now();
-      let next: SessionMeta = { ...fresh, ...nextPhase(fresh, now, this.timingFor(fresh)), seq: fresh.seq + 1 };
-      if (fresh.phase === "open" || fresh.phase === "question") {
-        next = await this.resolve(fresh, next);
+      let next: SessionMeta;
+      if (mutate) {
+        next = { ...(await mutate(fresh)), seq: fresh.seq + 1 };
+      } else {
+        next = { ...fresh, ...nextPhase(fresh, now, this.timingFor(fresh)), seq: fresh.seq + 1 };
+        if (fresh.phase === "open" || fresh.phase === "question") next = await this.resolve(fresh, next);
       }
+      next = releaseAnnouncements(next, now);
       await this.store.putMeta(next);
       return next;
     } finally {
@@ -189,9 +247,37 @@ export class GameService {
       this.store.getSubmissions(code, i),
       fresh.phase === "open" ? this.store.getViews(code, i) : Promise.resolve({}),
     ]);
-    const res = resolveItem(fresh, i, players, subs, views);
+    // Timeouts are ordered after every accepted submission (which can land in the grace window).
+    const deadlineAt = fresh.phase === "open" && fresh.openedAt !== null ? decisionClosesAt(fresh.openedAt, this.timingFor(fresh)) : (fresh.phaseEndsAt ?? this.now());
+    const eliminations = [...fresh.eliminations];
+    const res = resolveItem(fresh, i, players, subs, views, deadlineAt, eliminations);
     await this.store.putPlayers(code, res.players);
-    return { ...next, lastReveal: res.stats, leaderboard: res.leaderboard, rankedCount: res.rankedCount };
+    return {
+      ...next,
+      lastReveal: res.stats,
+      leaderboard: res.leaderboard,
+      eliminatedBoard: res.eliminatedBoard,
+      rankedCount: res.rankedCount,
+      eliminations,
+      announcements: [...next.announcements, ...announcementsFor(res.newEliminations, fresh.eliminations.length, eliminations.length)],
+    };
+  }
+
+  /** Settles the item in progress (if any) and freezes the session as final. */
+  private async finish(f: SessionMeta): Promise<SessionMeta> {
+    const now = this.now();
+    const settled = f.phase === "open" || f.phase === "question" ? await this.resolve(f, f) : f;
+    return {
+      ...settled,
+      status: "finished",
+      phase: "final",
+      phaseStartedAt: now,
+      phaseEndsAt: null,
+      openedAt: null,
+      pausedAt: null,
+      pausedRemainingMs: null,
+      endedEarly: f.phase !== "qreveal" || f.itemIndex < f.schedule.length - 1,
+    };
   }
 
   // ---------- Players ----------
@@ -236,6 +322,7 @@ export class GameService {
       throw new GameError(409, "This case is closed.");
     }
     if (meta.status === "paused") throw new GameError(409, "The game is paused.");
+    if (player.status === "eliminated") throw new GameError(409, "Your bank has been eliminated, so it cannot take decisions.");
     if (player.joinedAtItem > itemIndex) throw new GameError(409, "You joined after this case started.");
 
     const item = meta.schedule[itemIndex];
@@ -246,8 +333,9 @@ export class GameService {
       if (receivedAt > decisionClosesAt(meta.openedAt, this.timingFor(meta))) throw new GameError(409, "Time is up for this case.");
       elapsedMs = receivedAt - meta.openedAt;
     } else {
+      // The choice is the option's id (its source index), not its position on this player's screen.
       const q = typeof choice === "number" && Number.isInteger(choice) ? choice : -1;
-      if (q < 0 || q >= getQuestion(item.questionId).options.length) throw new GameError(400, "Choose one of the answers.");
+      if (q < 0 || q > 3) throw new GameError(400, "Choose one of the answers.");
       if (meta.phaseEndsAt !== null && receivedAt > meta.phaseEndsAt + NETWORK.latencyGraceMs) {
         throw new GameError(409, "Time is up for this question.");
       }
@@ -271,14 +359,16 @@ export class GameService {
       this.store.getSubmissions(meta.code, i),
       this.store.activeSince(meta.code, this.now() - NETWORK.activeWindowMs),
     ]);
-    if (active.length > 0 && active.every((id) => id in subs)) {
+    const out = new Set(meta.eliminations.map((e) => e.playerId));
+    const waitingOn = active.filter((id) => !out.has(id));
+    if (waitingOn.length > 0 && waitingOn.every((id) => id in subs)) {
       await this.advance(meta, (f) => f.status === "running" && f.itemIndex === i && (f.phase === "open" || f.phase === "question"));
     }
   }
 
   // ---------- Host ----------
 
-  async hostAction(code: string, token: string, action: string, playerId?: string): Promise<SessionMeta> {
+  async hostAction(code: string, token: string, action: string, playerId?: string, value?: unknown): Promise<SessionMeta> {
     let meta = await this.tick(code, await this.authHost(code, token));
     const now = () => this.now();
     for (let attempt = 0; attempt < 5; attempt++) {
@@ -298,8 +388,28 @@ export class GameService {
           meta = await this.advance(meta, (f) => f.status === "running", (f) => pause(f, now()));
           break;
         case "resume":
+        case "continue":
           if (meta.status !== "paused") return meta;
-          meta = await this.advance(meta, (f) => f.status === "paused", (f) => resume(f, now()));
+          meta = await this.advance(meta, (f) => f.status === "paused", (f) => resume(f, now(), this.timingFor(f)));
+          break;
+        case "end":
+          // Explicit end: settle whatever is open, then freeze the results as final.
+          if (meta.phase === "final") return meta;
+          meta = await this.advance(meta, (f) => f.phase !== "final", (f) => this.finish(f));
+          break;
+        case "reveal-podium":
+          if (meta.phase !== "final") throw new GameError(409, "The podium can be revealed once the game has ended.");
+          if (meta.podiumRevealed) return meta;
+          meta = await this.advance(meta, (f) => f.phase === "final" && !f.podiumRevealed, (f) => ({ ...f, podiumRevealed: true }));
+          break;
+        case "board":
+          meta = await this.advance(meta, () => true, (f) => ({ ...f, settings: { ...f.settings, boardOnScreen: value === true } }));
+          break;
+        case "announcements":
+          meta = await this.advance(meta, () => true, (f) => ({ ...f, settings: { ...f.settings, announceEliminations: value === true } }));
+          break;
+        case "dismiss":
+          meta = await this.advance(meta, () => true, (f) => ({ ...f, settings: { ...f.settings, announceDismissedAt: now() } }));
           break;
         case "kick": {
           if (!playerId) throw new GameError(400, "Missing player.");
@@ -322,6 +432,82 @@ export class GameService {
     return meta;
   }
 
+  /** What an adjustment would do, shown to the host before they confirm it. Changes nothing. */
+  async previewAdjustment(code: string, token: string, input: AdjustmentInput) {
+    const meta = await this.tick(code, await this.authHost(code, token));
+    const a = parseAdjustment(input);
+    const p = await this.store.getPlayer(code, a.playerId);
+    if (!p || p.kicked) throw new GameError(404, "That player is not in this game.");
+    const refusal = this.adjustmentRefusal(meta, p, a.op);
+    const change = a.op === "add" ? a.amount : -a.amount;
+    const pv = previewBalanceChange(p.balance, change, meta.eliminations);
+    return { name: p.name, before: p.balance, change, after: refusal ? p.balance : pv.after, outcome: refusal ? "refused" : pv.outcome, order: pv.order, refusal };
+  }
+
+  private adjustmentRefusal(meta: SessionMeta, p: PlayerRecord, op: "add" | "subtract"): string | null {
+    if (meta.podiumRevealed) return "The podium has been revealed; final results are frozen.";
+    if (p.status === "eliminated") return op === "add" ? "Eliminated banks cannot be revived." : "This bank is already eliminated.";
+    return null;
+  }
+
+  /**
+   * Applies a host adjustment exactly once (keyed by its id), under the session lock, through the
+   * same balance rule as gameplay, and re-ranks everyone in the same write.
+   */
+  async adjust(code: string, token: string, input: AdjustmentInput, actor: string): Promise<{ record: AdjustmentRecord; duplicate: boolean }> {
+    let meta = await this.tick(code, await this.authHost(code, token));
+    const a = parseAdjustment(input);
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const existing = meta.adjustments.find((r) => r.id === a.id);
+      if (existing) return { record: existing, duplicate: true };
+      let record: AdjustmentRecord | null = null;
+      const before = meta.seq;
+      meta = await this.advance(
+        meta,
+        (f) => !f.adjustments.some((r) => r.id === a.id),
+        async (f) => {
+          const players = await this.store.getPlayers(code);
+          const p = players.find((x) => x.id === a.playerId);
+          if (!p || p.kicked) throw new GameError(404, "That player is not in this game.");
+          const refusal = this.adjustmentRefusal(f, p, a.op);
+          if (refusal) throw new GameError(409, refusal);
+          const at = this.now();
+          const change = a.op === "add" ? a.amount : -a.amount;
+          const eliminations = [...f.eliminations];
+          const label = a.op === "add" ? "Host addition" : "Host deduction";
+          const b = applyBalanceChange(p, change, { cause: `${label}: ${a.reason}`, itemIndex: null, at }, eliminations);
+          p.history.push({
+            kind: "adjust",
+            i: -1,
+            c: null,
+            delta: b.applied,
+            raw: change,
+            speedBonus: 0,
+            ok: true,
+            ms: null,
+            note: b.outcome === "applied" ? undefined : b.outcome,
+            reason: a.reason,
+            ref: a.id,
+            at,
+          });
+          const st = standings(players);
+          await this.store.putPlayers(code, players);
+          record = { id: a.id, playerId: p.id, name: p.name, amount: a.amount, op: a.op, reason: a.reason, actor, before: b.before, after: b.after, outcome: b.outcome, at };
+          return {
+            ...f,
+            ...st,
+            eliminations,
+            adjustments: [...f.adjustments, record],
+            announcements: [...f.announcements, ...announcementsFor(b.record ? [b.record] : [], f.eliminations.length, eliminations.length)],
+          };
+        },
+      );
+      if (record) return { record, duplicate: false };
+      if (meta.seq === before) meta = await this.tick(code);
+    }
+    throw new GameError(503, "The game is busy. Try the adjustment again.");
+  }
+
   private async kick(code: string, playerId: string) {
     const p = await this.store.getPlayer(code, playerId);
     if (!p) return;
@@ -342,21 +528,30 @@ export class GameService {
       this.store.activeSince(code, this.now() - NETWORK.activeWindowMs),
       live ? this.store.countSubmissions(code, meta.itemIndex) : Promise.resolve(0),
     ]);
-    return { meta, players, activeIds: new Set(active), submitted, storeKind: this.store.kind };
+    return { meta, players, activeIds: new Set(active), submitted, storeKind: this.store.kind, floor: floorActive(meta.eliminations) };
   }
 
   async screenSnapshot(code: string) {
     const meta = await this.tick(code);
     const live = meta.phase === "open" || meta.phase === "question";
     const lobby = meta.phase === "lobby" || meta.phase === "intro";
+    // After the podium reveal the projector shows the full final ranking, not just the top 10.
+    const fullFinal = meta.phase === "final" && meta.podiumRevealed;
     const [playerCount, active, submitted, players] = await Promise.all([
       this.store.countPlayers(code),
       this.store.activeSince(code, this.now() - NETWORK.activeWindowMs),
       live ? this.store.countSubmissions(code, meta.itemIndex) : Promise.resolve(0),
-      lobby ? this.store.getPlayers(code) : Promise.resolve(null),
+      lobby || fullFinal ? this.store.getPlayers(code) : Promise.resolve(null),
     ]);
-    const names = players ? players.filter((p) => !p.kicked).sort((a, b) => a.joinedAt - b.joinedAt).map((p) => p.name) : null;
-    return { meta, playerCount, activeCount: active.length, submitted, names };
+    const names = lobby && players ? players.filter((p) => !p.kicked).sort((a, b) => a.joinedAt - b.joinedAt).map((p) => p.name) : null;
+    const finalBoard =
+      fullFinal && players
+        ? players
+            .filter((p) => !p.kicked && p.status === "active")
+            .sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || a.joinedAt - b.joinedAt)
+            .map(toLeaderEntry)
+        : null;
+    return { meta, playerCount, activeCount: active.length, submitted, names, finalBoard };
   }
 
   async allPlayers(code: string, token: string): Promise<[SessionMeta, PlayerRecord[]]> {

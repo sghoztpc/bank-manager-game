@@ -6,8 +6,9 @@ import {
   FRAUD_MISS_LOSS,
   FRAUD_REWARD,
   SPEED_TIERS,
+  vnd,
 } from "../config";
-import type { BonusQuestion, DecisionCase } from "../types";
+import type { DecisionCase, QuizQuestion } from "../types";
 
 export type Choice = "a" | "d";
 
@@ -50,7 +51,7 @@ export function resolveDecision(c: DecisionCase, choice: Choice | null, elapsedM
   let base: number;
   let label: string;
   if (c.kind === "loan") {
-    const amount = Math.round(ECONOMY.loanStake * c.outcome.pct);
+    const amount = vnd(ECONOMY.loanStake * c.outcome.pct);
     if (applied === "a") {
       base = c.outcome.result === "repaid" ? amount : -amount;
       label = c.outcome.result === "repaid" ? "Loan repaid" : "Loan defaulted";
@@ -67,7 +68,7 @@ export function resolveDecision(c: DecisionCase, choice: Choice | null, elapsedM
     label = prefix + (c.truth === "fraud" ? "Fraud stopped" : "Genuine customer blocked");
   }
 
-  const speedBonus = ok && base > 0 ? Math.round(base * speedBonusRate(elapsedMs)) : 0;
+  const speedBonus = ok && base > 0 ? vnd(base * speedBonusRate(elapsedMs)) : 0;
   const delta = base + speedBonus;
   return {
     applied,
@@ -81,7 +82,8 @@ export function resolveDecision(c: DecisionCase, choice: Choice | null, elapsedM
   };
 }
 
-export function resolveQuestion(q: BonusQuestion, answer: number | null, reward: "powerup" | "money") {
+/** `answer` is the chosen option id (its index in the source), not its on-screen position. */
+export function resolveQuestion(q: QuizQuestion, answer: number | null, reward: "powerup" | "money") {
   const ok = answer === q.answerIndex;
   return {
     ok,

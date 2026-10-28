@@ -4,7 +4,8 @@
 //   npm run bots -- --url https://your-app.vercel.app --room ABCDE --players 40
 //
 // Bots do not know the answers: they approve about 60% of the time, pick quiz answers at random,
-// take 3-18 s per decision, and occasionally miss the deadline.
+// take 3-18 s per decision, and occasionally miss the deadline. That is reckless lending, so
+// expect several bots to go bankrupt: watch the elimination announcements and the 1 VND floor.
 
 import type { PlayerView } from "../src/lib/view-types";
 
@@ -46,7 +47,9 @@ async function bot(i: number) {
     const v = r.body;
     lastPhase = v.phase;
     if (v.phase === "final") return v.me;
-    if ((v.phase === "open" || v.phase === "question") && v.status === "running" && !answered.has(v.itemIndex) && v.me.submitted === null) {
+    const q = v.item?.question;
+    const canAct = v.me.status === "active" && (v.phase === "open" || (v.phase === "question" && q));
+    if (canAct && v.status === "running" && !answered.has(v.itemIndex) && v.me.submitted === null) {
       answered.add(v.itemIndex);
       // Keep polling while "thinking", like a real phone, so the bot still holds the case open.
       const until = Date.now() + (3000 + Math.random() * 15000 + (Math.random() < 0.08 ? 8000 : 0)) * v.scale;
@@ -54,7 +57,8 @@ async function bot(i: number) {
         await sleep(Math.min(2000, until - Date.now()));
         await call(`/api/sessions/${ROOM}/state?role=player&hb=1&first=0`, auth);
       }
-      const choice = v.phase === "open" ? (Math.random() < 0.6 ? "a" : "d") : Math.floor(Math.random() * 4);
+      // Quiz answers are option ids from this bot's own shuffled question.
+      const choice = v.phase === "open" ? (Math.random() < 0.6 ? "a" : "d") : q!.options[Math.floor(Math.random() * 4)].id;
       await call(`/api/sessions/${ROOM}/submit`, { method: "POST", ...auth, body: JSON.stringify({ itemIndex: v.itemIndex, choice }) });
       continue;
     }

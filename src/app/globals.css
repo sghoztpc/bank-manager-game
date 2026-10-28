@@ -171,3 +171,34 @@ tr.me td { background: rgba(242, 169, 59, .12); }
 .screen .small, .screen .dist .small { font-size: 20px; }
 .screen .dist .bar { height: 16px; border-radius: 8px; }
 .options button:disabled { opacity: .9; }
+
+/* Brief 2: eliminated section, effects */
+tbody.out th { color: var(--bad); padding-top: 14px; }
+tbody.out td { color: var(--muted); }
+.confetti { position: fixed; inset: 0; pointer-events: none; overflow: hidden; z-index: 40; }
+.confetti i { position: absolute; top: -12px; width: 8px; height: 14px; border-radius: 2px; animation-name: fall; animation-timing-function: linear; animation-fill-mode: forwards; }
+@keyframes fall { to { transform: translateY(105vh) rotate(720deg); opacity: .8; } }
+.flash-up { animation: flashUp 1.2s ease-out; }
+.flash-down { animation: flashDown 1.2s ease-out; }
+@keyframes flashUp { 0% { color: var(--good); text-shadow: 0 0 12px rgba(60,191,143,.8); } 100% { color: inherit; text-shadow: none; } }
+@keyframes flashDown { 0% { color: var(--bad); text-shadow: 0 0 12px rgba(239,90,95,.8); } 100% { color: inherit; text-shadow: none; } }
+.gameover { text-align: center; align-items: center; border-color: var(--bad); }
+.gameover h2 { color: var(--bad); font-size: 44px; }
+.announce { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); width: min(1100px, calc(100vw - 32px)); z-index: 30;
+  background: #2a1218; border: 2px solid var(--bad); border-radius: 10px; padding: 14px 20px; display: flex; gap: 14px; align-items: center;
+  animation: slideUp .35s ease-out; box-shadow: 0 10px 30px rgba(0,0,0,.5); }
+.announce.floor { background: #2a2010; border-color: var(--accent); }
+.announce strong { font-family: var(--display); font-size: 28px; letter-spacing: .03em; }
+@keyframes slideUp { from { transform: translate(-50%, 30px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+.toast { position: fixed; left: 50%; top: 12px; transform: translateX(-50%); width: min(520px, calc(100vw - 24px)); z-index: 35;
+  background: var(--panel2); border: 1px solid var(--accent); border-radius: 8px; padding: 10px 14px; pointer-events: none; }
+.podium > div > div { display: flex; flex-direction: column; gap: 2px; }
+.balance-row { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.select { font: inherit; font-size: 16px; background: var(--bg); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 10px; width: 100%; }
+@media (max-width: 600px) {
+  .podium { grid-template-columns: 1fr; }
+  .podium .p1 { order: 1; min-height: 0; }
+  .podium .p2 { order: 2; min-height: 0; }
+  .podium .p3 { order: 3; min-height: 0; }
+  .podium .place { font-size: 32px; }
+}

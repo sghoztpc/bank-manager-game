@@ -3,7 +3,7 @@ import { bearer, codeParam, handle, json, readJson } from "@/lib/http";
 
 export const dynamic = "force-dynamic";
 
-/** Host controls: start, pause, resume, skip, kick. */
+/** Host controls: start, pause, continue, skip, end, reveal-podium, board, announcements, dismiss, kick. */
 export async function POST(req: Request, ctx: { params: Promise<{ code: string }> }) {
   return handle(async () => {
     const code = await codeParam(ctx.params);
@@ -13,6 +13,7 @@ export async function POST(req: Request, ctx: { params: Promise<{ code: string }
       bearer(req),
       String(body.action ?? ""),
       typeof body.playerId === "string" ? body.playerId : undefined,
+      body.value,
     );
     return json({ ok: true, phase: meta.phase, status: meta.status, seq: meta.seq });
   });

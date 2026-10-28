@@ -1,12 +1,15 @@
 import { NETWORK } from "../config";
+import { applyBalanceChange } from "../engine/elimination";
 import { grantPowerUp } from "../engine/powerups";
-import { rankPlayers, toLeaderEntries } from "../engine/ranking";
-import { getCase, getQuestion } from "../engine/schedule";
+import { getQuizQuestion } from "../engine/quiz";
+import { eliminatedPlayers, rankPlayers, toLeaderEntries, toLeaderEntry } from "../engine/ranking";
+import { getCase } from "../engine/schedule";
 import { resolveDecision, resolveQuestion, type Choice } from "../engine/scoring";
-import type { LeaderEntry, PlayerRecord, RevealStats, SessionMeta, Submission } from "../types";
+import type { EliminationRecord, LeaderEntry, PlayerRecord, RevealStats, SessionMeta, Submission } from "../types";
 
-// The only code that changes balances. It runs once per item, under the session lock, and is
-// idempotent per player (lastResolved), so a retry after a crash cannot double-count.
+// The only code that changes balances during play (host adjustments use the same balance rule
+// in service.ts). It runs once per item, under the session lock, and is idempotent per player
+// (lastResolved), so a retry after a crash cannot double-count.
 
 export const LEADERBOARD_SIZE = 10;
 
@@ -19,11 +22,27 @@ export function responseMs(sub: Submission, viewOffsetMs: number | undefined, sc
   return Math.max(0, sub.elapsedMs - lag) / scale;
 }
 
-export interface Resolution {
+export interface Standings {
+  leaderboard: LeaderEntry[];
+  eliminatedBoard: LeaderEntry[];
+  rankedCount: number;
+}
+
+/** Re-ranks everyone; called after every money-changing event. */
+export function standings(players: PlayerRecord[]): Standings {
+  const ranked = rankPlayers(players);
+  return {
+    leaderboard: toLeaderEntries(ranked, LEADERBOARD_SIZE),
+    eliminatedBoard: eliminatedPlayers(players).map(toLeaderEntry),
+    rankedCount: ranked.length,
+  };
+}
+
+export interface Resolution extends Standings {
   players: PlayerRecord[];
   stats: RevealStats;
-  leaderboard: LeaderEntry[];
-  rankedCount: number;
+  /** Eliminations committed by this item, in order. */
+  newEliminations: EliminationRecord[];
 }
 
 export function resolveItem(
@@ -32,19 +51,29 @@ export function resolveItem(
   players: PlayerRecord[],
   subs: Record<string, Submission>,
   views: Record<string, number>,
+  /** Decision items: the server deadline; timeouts are ordered at this moment. */
+  deadlineAt: number,
+  eliminations: EliminationRecord[],
 ): Resolution {
   const item = meta.schedule[itemIndex];
-  const stats: RevealStats = { itemIndex, approve: 0, decline: 0, timeout: 0, correct: 0 };
+  const stats: RevealStats = { itemIndex, approve: 0, decline: 0, timeout: 0, correct: 0, eliminated: 0 };
+  const before = eliminations.length;
+  const eligible = players.filter((p) => !p.kicked && p.status === "active" && p.joinedAtItem <= itemIndex && p.lastResolved < itemIndex);
 
   if (item.type === "decision") {
     const c = getCase(item.caseId);
-    for (const p of players) {
-      if (p.kicked || p.joinedAtItem > itemIndex || p.lastResolved >= itemIndex) continue;
+    const results = eligible.map((p) => {
       const sub = subs[p.id];
       const choice = sub && (sub.choice === "a" || sub.choice === "d") ? (sub.choice as Choice) : null;
       const ms = sub && choice ? responseMs(sub, views[p.id], meta.scale) : null;
-      const r = resolveDecision(c, choice, ms);
-      p.balance += r.delta;
+      return { p, choice, ms, at: sub && choice ? sub.receivedAt : deadlineAt, r: resolveDecision(c, choice, ms) };
+    });
+    // One authoritative order: when the server received each decision (timeouts at the
+    // deadline), then join order. If several players hit zero at once, earlier events take
+    // the remaining elimination slots and later ones get the safety floor.
+    results.sort((a, b) => a.at - b.at || a.p.joinedAt - b.p.joinedAt);
+    for (const { p, choice, ms, at, r } of results) {
+      const b = applyBalanceChange(p, r.delta, { cause: `Case ${item.decisionNo} · ${r.label}`, itemIndex, at }, eliminations);
       if (r.ok) {
         p.correct += 1;
         p.correctMs += Math.round(ms ?? 0);
@@ -53,27 +82,41 @@ export function resolveItem(
       if (r.timedOut) stats.timeout += 1;
       else if (r.applied === "a") stats.approve += 1;
       else stats.decline += 1;
-      p.history.push({ i: itemIndex, c: choice, delta: r.delta, speedBonus: r.speedBonus, ok: r.ok, ms: ms === null ? null : Math.round(ms) });
+      p.history.push({
+        kind: "decision",
+        i: itemIndex,
+        c: choice,
+        delta: b.applied,
+        raw: r.delta,
+        speedBonus: r.speedBonus,
+        ok: r.ok,
+        ms: ms === null ? null : Math.round(ms),
+        note: b.outcome === "applied" ? undefined : b.outcome,
+        at,
+      });
       p.lastResolved = itemIndex;
     }
   } else {
-    const q = getQuestion(item.questionId);
-    stats.options = q.options.map(() => 0);
-    for (const p of players) {
-      if (p.kicked || p.joinedAtItem > itemIndex || p.lastResolved >= itemIndex) continue;
+    stats.wrong = 0;
+    const ordered = eligible.slice().sort((a, b) => (subs[a.id]?.receivedAt ?? deadlineAt) - (subs[b.id]?.receivedAt ?? deadlineAt) || a.joinedAt - b.joinedAt);
+    for (const p of ordered) {
+      const assignment = p.quiz[item.questionNo - 1];
+      const q = getQuizQuestion(assignment.questionId);
       const sub = subs[p.id];
       const answer = sub && typeof sub.choice === "number" ? sub.choice : null;
       const r = resolveQuestion(q, answer, item.reward);
       if (answer === null) stats.timeout += 1;
-      else if (answer >= 0 && answer < q.options.length) stats.options[answer] += 1;
-      if (r.ok) stats.correct += 1;
-      p.balance += r.delta;
+      else if (r.ok) stats.correct += 1;
+      else stats.wrong += 1;
+      const at = sub?.receivedAt ?? deadlineAt;
+      const b = applyBalanceChange(p, r.delta, { cause: `Quiz ${item.questionNo}`, itemIndex, at }, eliminations);
       if (r.grantsPowerUp) grantPowerUp(p, `Q${item.questionNo}`, itemIndex);
-      p.history.push({ i: itemIndex, c: answer, delta: r.delta, speedBonus: 0, ok: r.ok, ms: null });
+      p.history.push({ kind: "quiz", i: itemIndex, c: answer, delta: b.applied, raw: r.delta, speedBonus: 0, ok: r.ok, ms: null, at });
       p.lastResolved = itemIndex;
     }
   }
 
-  const ranked = rankPlayers(players);
-  return { players, stats, leaderboard: toLeaderEntries(ranked, LEADERBOARD_SIZE), rankedCount: ranked.length };
+  const newEliminations = eliminations.slice(before);
+  stats.eliminated = newEliminations.length;
+  return { players, stats, newEliminations, ...standings(players) };
 }

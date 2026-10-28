@@ -1,7 +1,6 @@
 import { DRAW } from "../config";
 import { FRAUD_CASES } from "../content/fraud";
 import { LOANS } from "../content/loans";
-import { QUESTIONS } from "../content/questions";
 import type { DecisionCase, ScheduleItem } from "../types";
 
 export const DECISION_COUNT = 24;
@@ -67,7 +66,6 @@ export function buildSchedule(seed: number): ScheduleItem[] {
         questionNo: q + 1,
         afterDecision: n,
         reward: q === QUESTION_AFTER.length - 1 ? "money" : "powerup",
-        questionId: QUESTIONS[q].id,
       });
     }
   }
@@ -75,16 +73,9 @@ export function buildSchedule(seed: number): ScheduleItem[] {
 }
 
 const CASES = new Map<string, DecisionCase>([...LOANS, ...FRAUD_CASES].map((c) => [c.id, c]));
-const QUESTION_MAP = new Map(QUESTIONS.map((q) => [q.id, q]));
 
 export function getCase(id: string): DecisionCase {
   const c = CASES.get(id);
   if (!c) throw new Error(`Unknown case ${id}`);
   return c;
-}
-
-export function getQuestion(id: string) {
-  const q = QUESTION_MAP.get(id);
-  if (!q) throw new Error(`Unknown question ${id}`);
-  return q;
 }

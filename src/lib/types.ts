@@ -48,20 +48,35 @@ export interface FraudCase {
 
 export type DecisionCase = LoanCase | FraudCase;
 
-export interface BonusQuestion {
+export type QuizCategory = "warm-up" | "tricky" | "hardcore" | "core";
+
+export interface QuizQuestion {
   id: string;
+  category: QuizCategory;
   topic: string;
   prompt: string;
-  options: string[];
+  /** Source order; an option's id is its index here, whatever order a player sees. */
+  options: [string, string, string, string];
   answerIndex: number;
-  explanation: string;
+  /** The answer line as supplied in the source document, shown at the reveal. */
+  suppliedAnswer: string;
+  /** Why the item is held back, and the proposed correction. */
+  review: string | null;
+  playable: boolean;
+}
+
+/** One player's question for one quiz slot, fixed at join and never rerolled. */
+export interface QuizAssignment {
+  questionId: string;
+  /** Option ids (source indexes) in the order this player sees them. */
+  order: number[];
 }
 
 // ---------- Schedule ----------
 
 export type ScheduleItem =
   | { type: "decision"; decisionNo: number; mode: "loan" | "fraud"; caseId: string }
-  | { type: "question"; questionNo: number; afterDecision: number; reward: "powerup" | "money"; questionId: string };
+  | { type: "question"; questionNo: number; afterDecision: number; reward: "powerup" | "money" };
 
 // ---------- Session state ----------
 
@@ -82,8 +97,10 @@ export interface RevealStats {
   decline: number;
   timeout: number;
   correct: number;
-  /** Bonus questions: count per option. */
-  options?: number[];
+  /** Quiz items: answered but wrong (each player has their own question). */
+  wrong?: number;
+  /** Players eliminated by this item. */
+  eliminated?: number;
 }
 
 export interface LeaderEntry {
@@ -91,8 +108,51 @@ export interface LeaderEntry {
   name: string;
   balance: number;
   correct: number;
-  rank: number;
+  /** Shared competitive rank among active players; null for eliminated players. */
+  rank: number | null;
+  /** Positive = moved up since the previous update. */
+  rankChange: number;
   late: boolean;
+  status: PlayerStatus;
+  eliminationOrder: number | null;
+}
+
+export type PlayerStatus = "active" | "eliminated";
+
+export interface EliminationRecord {
+  order: number;
+  playerId: string;
+  name: string;
+  /** What triggered it, e.g. "Case 7 · loan defaulted" or "Host deduction: ...". */
+  cause: string;
+  itemIndex: number | null;
+  before: number;
+  /** The change as computed, before the balance was set to 0. */
+  change: number;
+  at: number;
+}
+
+export interface AdjustmentRecord {
+  /** Idempotency key chosen by the host's form; a repeated submission is not applied again. */
+  id: string;
+  playerId: string;
+  name: string;
+  amount: number;
+  op: "add" | "subtract";
+  reason: string;
+  actor: string;
+  before: number;
+  after: number;
+  outcome: "applied" | "eliminated" | "floored";
+  at: number;
+}
+
+export interface Announcement {
+  id: string;
+  kind: "elimination" | "floor";
+  text: string;
+  /** Set when the projector may show it: never while a case or quiz is open. */
+  showFrom: number | null;
 }
 
 export interface SessionMeta {
@@ -116,21 +176,47 @@ export interface SessionMeta {
   pausedRemainingMs: number | null;
   pausedAt: number | null;
   lastReveal: RevealStats | null;
-  /** Top of the table, refreshed whenever an item is resolved. */
+  /** Top of the active table, refreshed on every money-changing event. */
   leaderboard: LeaderEntry[];
-  /** Players ranked at the last resolution ("rank 5 of 47"). */
+  /** Every eliminated player, in elimination order. */
+  eliminatedBoard: LeaderEntry[];
+  /** Active players ranked at the last update ("rank 5 of 47"). */
   rankedCount: number;
+  /** Authoritative elimination order; the quota and the safety floor derive from it. */
+  eliminations: EliminationRecord[];
+  adjustments: AdjustmentRecord[];
+  announcements: Announcement[];
+  settings: {
+    /** Show elimination announcements on the projector. */
+    announceEliminations: boolean;
+    announceDismissedAt: number | null;
+    /** Host toggle: keep the leaderboard on the projector. */
+    boardOnScreen: boolean;
+  };
+  /** Final phase: the host reveals the podium; afterwards results are frozen. */
+  podiumRevealed: boolean;
+  endedEarly: boolean;
 }
 
 export interface HistoryEntry {
-  /** Schedule index. */
+  kind: "decision" | "quiz" | "adjust";
+  /** Schedule index; -1 for host adjustments. */
   i: number;
-  /** "a" approve/allow, "d" decline/block, null timed out; questions store the option index. */
+  /** "a" approve/allow, "d" decline/block, null timed out; quizzes store the chosen option id. */
   c: "a" | "d" | number | null;
+  /** The change actually applied to the balance (after elimination or the safety floor). */
   delta: number;
+  /** The change as computed by the rules. Differs from delta only when the balance hit zero. */
+  raw: number;
   speedBonus: number;
   ok: boolean;
   ms: number | null;
+  /** "eliminated" or "floored" when the zero rule applied. */
+  note?: "eliminated" | "floored";
+  /** Host adjustments: the recorded reason and record id. */
+  reason?: string;
+  ref?: string;
+  at: number;
 }
 
 export interface PowerUpToken {
@@ -149,14 +235,19 @@ export interface PlayerRecord {
   /** -1 for players who joined before the first case; otherwise the first schedule item they play. */
   joinedAtItem: number;
   kicked: boolean;
+  status: PlayerStatus;
+  eliminationOrder: number | null;
   balance: number;
   correct: number;
-  /** Sum of response times of correct submitted decisions; third tie-breaker. */
+  /** Sum of response times of correct submitted decisions (reported, not a tie-breaker). */
   correctMs: number;
   lastResolved: number;
   rank: number | null;
+  prevRank: number | null;
   history: HistoryEntry[];
   inventory: PowerUpToken[];
+  /** Five questions, one per quiz slot, drawn at join. */
+  quiz: QuizAssignment[];
 }
 
 export interface Submission {
